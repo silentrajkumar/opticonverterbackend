@@ -1,6 +1,7 @@
 .git
 .github
 node_modules
+__pycache__
+*.pyc
 npm-debug.log
-tests
 *.log
