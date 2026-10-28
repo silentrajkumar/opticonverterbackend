@@ -1,0 +1,11 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      PORT: 8000
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      OCR_ENDPOINT_TOKEN: ${OCR_ENDPOINT_TOKEN:-}
+      ERROR_LOG_PATH: ${ERROR_LOG_PATH:-/tmp/opticonverter-errors.log}
+    ports:
+      - "8000:8000"
