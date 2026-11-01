@@ -5,8 +5,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+      ffmpeg \
       ghostscript \
+      libreoffice-writer \
+      libreoffice-calc \
+      libreoffice-impress \
       poppler-utils \
+      libheif1 \
       tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 

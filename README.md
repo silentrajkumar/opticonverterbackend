@@ -8,7 +8,8 @@ Python API for the PDF conversion tools used by OptiConverter.
 - PDF to JPG/PNG conversion, returning all pages in a ZIP archive.
 - PDF to DOCX conversion using text extraction and OCR for scanned pages.
 - PDF merge, page-range split, rotation, watermark, and metadata operations.
-- AI mode for deterministic batch conversion of mixed PDF, DOCX, image, text, and Markdown uploads.
+- AI mode for dropdown-selected conversion of supported image, PDF, Office, text, audio, video, and archive formats.
+- Deterministic batch conversion of mixed PDF, DOCX, image, text, and Markdown uploads.
 
 ## Run locally
 
@@ -28,6 +29,7 @@ The API listens on port `8000` by default.
 - `GET /health` returns `{ "status": "ok" }`.
 - `GET /formats` returns supported conversion formats.
 - `POST /convert?format=.jpg|.png|.docx|.pdf` accepts one multipart file field named `file`.
+- `POST /ai-convert?format=<extension>` accepts one multipart `file` and converts it to the selected dropdown format. Optional query parameters are `quality`, `compression`, and `compress=any`. It supports image, PDF, Office, text, media, and archive conversion pairs implemented by the service.
 - `POST /ai/convert?format=.jpg|.png|.docx|.pdf` accepts up to 20 mixed files in the
   `files` field and returns one ZIP containing the converted result for each file.
   `/convert/batch` is an alias for this endpoint. Supported inputs are PDF, DOCX,

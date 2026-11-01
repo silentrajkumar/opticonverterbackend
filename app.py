@@ -12,6 +12,21 @@ from pypdf.errors import PdfReadError
 from docx import Document
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
+from ai_converter import (
+    ARCHIVE_INPUTS,
+    ARCHIVE_OUTPUTS,
+    AUDIO_INPUTS,
+    AUDIO_OUTPUTS,
+    IMAGE_INPUTS,
+    IMAGE_OUTPUTS,
+    OFFICE_INPUTS,
+    OFFICE_OUTPUTS,
+    VIDEO_INPUTS,
+    VIDEO_OUTPUTS,
+    ConversionFailure,
+    convert_file,
+    output_extension,
+)
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
@@ -229,8 +244,9 @@ def formats():
     return jsonify({
         "pdf": [".jpg", ".png", ".docx", ".pdf"],
         "ai": {
-            "input": [".pdf", ".docx", ".png", ".jpg", ".jpeg", ".txt", ".md"],
-            "output": [".jpg", ".png", ".docx", ".pdf"],
+            "endpoint": "/ai-convert",
+            "input": sorted({".pdf", ".txt"} | IMAGE_INPUTS | OFFICE_INPUTS | VIDEO_INPUTS | AUDIO_INPUTS | ARCHIVE_INPUTS),
+            "output": sorted(IMAGE_OUTPUTS | OFFICE_OUTPUTS | VIDEO_OUTPUTS | AUDIO_OUTPUTS | ARCHIVE_OUTPUTS | {".pdf", ".gif", ".docx"}),
         },
         "operations": ["merge", "split", "rotate", "watermark", "metadata"],
     })
@@ -253,6 +269,47 @@ def convert():
             raise ValueError("Choose .jpg, .png, .docx, or .pdf.")
         return send_result(directory, output, output.name)
     except (ValueError, RuntimeError) as exc:
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
+        return fail(str(exc), 422)
+
+
+@app.post("/ai-convert")
+def ai_mode_convert():
+    directory = None
+    try:
+        uploaded = request.files.get("file")
+        if not uploaded or not uploaded.filename:
+            raise ValueError("Upload one file in the file field.")
+        input_name = Path(uploaded.filename).name
+        lower_name = input_name.lower()
+        input_ext = ".tar.gz" if lower_name.endswith(".tar.gz") else Path(lower_name).suffix
+        target = request.args.get("format", "").lower()
+        if not input_ext or not target:
+            raise ValueError("Choose an input file and an output format from the dropdown.")
+
+        quality = request.args.get("quality", "85")
+        if not quality.isdigit() or not 30 <= int(quality) <= 100:
+            raise ValueError("Image quality must be an integer between 30 and 100.")
+        compression_value = request.args.get("compression", "auto").lower()
+        compression = None if compression_value == "auto" else int(compression_value)
+        if compression is not None and not 0 <= compression <= 90:
+            raise ValueError("Compression must be an integer between 0 and 90 percent.")
+        compress = request.args.get("compress", "").lower() == "any"
+
+        directory = tempfile.mkdtemp(prefix="opticonverter-ai-")
+        source = Path(directory) / f"source{input_ext}"
+        uploaded.save(source)
+        if source.stat().st_size == 0:
+            raise ValueError("The uploaded file is empty.")
+        output_ext = output_extension(input_ext, target)
+        stem = input_name[:-7] if lower_name.endswith(".tar.gz") else Path(input_name).stem
+        prefix = f"{stem}-compressed" if compress or (input_ext == ".pdf" and target == ".pdf") else stem
+        output = Path(directory) / f"{safe_stem(prefix, 'converted')}{output_ext}"
+        convert_file(source, output, input_name, target, int(quality), compression, compress)
+        checked_output(output)
+        return send_result(directory, output, output.name)
+    except (ValueError, RuntimeError, OSError, ConversionFailure) as exc:
         if directory:
             shutil.rmtree(directory, ignore_errors=True)
         return fail(str(exc), 422)
