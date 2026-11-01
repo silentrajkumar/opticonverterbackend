@@ -13,7 +13,15 @@ Python API for the PDF conversion tools used by OptiConverter.
 
 ## Run locally
 
-Requirements: Python 3.12+, Ghostscript, Poppler, and Tesseract OCR.
+The recommended local setup uses Docker Compose so the API has all of its required conversion tools:
+
+```sh
+docker compose up --build -d
+```
+
+The API listens on port `8000` by default, matching the frontend's local Vite proxy. Stop it with `docker compose down`.
+
+To run the API directly with Python, install Python 3.12+, Ghostscript, Poppler, Tesseract OCR, LibreOffice (Writer, Calc, and Impress), FFmpeg, and the HEIF system library first.
 
 ```sh
 python -m venv .venv
