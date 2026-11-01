@@ -250,7 +250,16 @@ def formats():
     ai_outputs = sorted(IMAGE_OUTPUTS | OFFICE_OUTPUTS | VIDEO_OUTPUTS | AUDIO_OUTPUTS | ARCHIVE_OUTPUTS | {".pdf", ".gif", ".docx"})
     return jsonify({
         "max_upload_bytes": MAX_UPLOAD_BYTES,
-        "native_tools": {"ffmpeg": bool(shutil.which("ffmpeg")), "ghostscript": bool(shutil.which("gs")), "libreoffice": bool(shutil.which("libreoffice")), "poppler": bool(shutil.which("pdftoppm")), "tesseract": bool(shutil.which("tesseract"))},
+        "native_tools": {
+            "ffmpeg": bool(shutil.which("ffmpeg")),
+            "ghostscript": bool(shutil.which("gs")),
+            "gs": bool(shutil.which("gs")),
+            "libreoffice": bool(shutil.which("libreoffice")),
+            "pdftoppm": bool(shutil.which("pdftoppm")),
+            "poppler": bool(shutil.which("pdftoppm")),
+            "tesseract": bool(shutil.which("tesseract")),
+            "tesseract.js": False,
+        },
         "ocr_engine": "tesseract",
         "ocr_endpoint_configured": bool(shutil.which("tesseract")),
         "conversions": {

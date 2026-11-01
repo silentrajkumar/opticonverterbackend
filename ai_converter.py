@@ -73,7 +73,7 @@ def image_convert(source, output, target, quality):
         raise ConversionFailure("The image format could not be decoded. HEIC files require pillow-heif support.") from exc
 
 
-def pdf_pages(source, output, target):
+def pdf_pages(source, output, target, output_stem=None):
     directory = output.parent
     prefix = directory / "page"
     extension = "jpg" if target in {".jpg", ".jpeg"} else "png"
@@ -86,7 +86,7 @@ def pdf_pages(source, output, target):
         raise ConversionFailure("No pages were rendered from this PDF.")
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         for index, page in enumerate(pages, 1):
-            archive.write(page, f"{source.stem}-{index}.{extension}")
+            archive.write(page, f"{output_stem or source.stem}-{index}.{extension}")
 
 
 def pdf_compress(source, output):
@@ -257,7 +257,8 @@ def convert_file(source, output, input_name, target, quality=85, compression=Non
         elif target == ".pdf":
             pdf_compress(source, output)
         elif target in {".jpg", ".jpeg", ".png"}:
-            pdf_pages(source, output, target)
+            source_stem = input_name[:-4] if input_name.lower().endswith(".pdf") else source.stem
+            pdf_pages(source, output, target, source_stem)
         else:
             raise ConversionFailure(f"Conversion from {source_ext} to {target} is not supported.")
     elif source_ext in IMAGE_INPUTS:
