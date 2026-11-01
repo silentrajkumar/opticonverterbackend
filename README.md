@@ -11,6 +11,24 @@ Python API for the PDF conversion tools used by OptiConverter.
 - AI mode for dropdown-selected conversion of supported image, PDF, Office, text, audio, video, and archive formats.
 - Deterministic batch conversion of mixed PDF, DOCX, image, text, and Markdown uploads.
 
+## Converter modules
+
+Format-specific conversion logic is separated under `converters/`:
+
+- `image_converter.py` handles raster image conversion.
+- `pdf_converter.py` handles PDF rendering, compression, and editable DOCX export.
+- `office_converter.py` handles Office and text documents.
+- `audio_converter.py` and `video_converter.py` provide separate FFmpeg engines for each media type.
+- `media_converter.py` remains as a compatibility facade for older imports.
+- `text_converter.py` lays out plain text and Markdown as PDF.
+- `ocr_converter.py` handles OCR extraction from uploaded images.
+- `archive_converter.py` handles ZIP and TAR archives.
+- `router.py` validates the input/output pair and dispatches to the matching converter.
+- `common.py` contains shared process helpers and conversion errors.
+
+`app.py` owns the HTTP routes. `ai_converter.py` remains as a small compatibility
+module for existing imports; new converter code belongs in `converters/`.
+
 ## Run locally
 
 The recommended local setup uses Docker Compose so the API has all of its required conversion tools:

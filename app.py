@@ -1,20 +1,17 @@
 import io
 import os
 import shutil
-import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
-from PIL import Image, ImageOps
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
-from docx import Document
-from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
-from ai_converter import (
+
+from converters import (
     ARCHIVE_INPUTS,
     ARCHIVE_OUTPUTS,
     AUDIO_INPUTS,
@@ -29,10 +26,13 @@ from ai_converter import (
     convert_file,
     output_extension,
 )
+from converters.image_converter import image_convert
+from converters.office_converter import document_to_pdf
+from converters.ocr_converter import image_ocr as extract_image_text
+from converters.pdf_converter import pdf_compress, pdf_pages, pdf_to_editable_docx
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
-CONVERSION_TIMEOUT_SECONDS = 120
 MAX_BATCH_FILES = 20
 MAX_OCR_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_OCR_PIXELS = 40_000_000
@@ -59,25 +59,6 @@ def add_cors_headers(response):
 
 def fail(message, status=400):
     return jsonify(detail=message), status
-
-
-def tool(name):
-    path = shutil.which(name)
-    if not path:
-        raise RuntimeError(f"{name} is required but is not installed.")
-    return path
-
-
-def run(command):
-    try:
-        return subprocess.run(
-            command, check=True, capture_output=True, timeout=CONVERSION_TIMEOUT_SECONDS
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ValueError("The conversion exceeded the two-minute time limit.") from exc
-    except subprocess.CalledProcessError as exc:
-        detail = exc.stderr.decode(errors="replace").strip()
-        raise ValueError(detail or "The conversion tool could not process this file.") from exc
 
 
 def checked_upload(field="file"):
@@ -108,50 +89,6 @@ def safe_stem(filename, fallback):
     return stem or fallback
 
 
-def text_to_pdf(source, output):
-    canvas = Canvas(str(output))
-    width, height = 612, 792
-    y = height - 48
-    canvas.setFont("Helvetica", 11)
-    for line in source.read_text(encoding="utf-8", errors="replace").splitlines() or [""]:
-        if y < 48:
-            canvas.showPage()
-            canvas.setFont("Helvetica", 11)
-            y = height - 48
-        canvas.drawString(48, y, line[:120])
-        y -= 16
-    canvas.save()
-
-
-def docx_to_pdf(source, output):
-    document = Document(str(source))
-    canvas = Canvas(str(output))
-    width, height = 612, 792
-    y = height - 48
-    canvas.setFont("Helvetica", 11)
-    for paragraph in document.paragraphs:
-        for line in (paragraph.text or "").splitlines() or [""]:
-            if y < 48:
-                canvas.showPage()
-                canvas.setFont("Helvetica", 11)
-                y = height - 48
-            canvas.drawString(48, y, line[:120])
-            y -= 16
-    canvas.save()
-
-
-def image_to_pdf(source, output):
-    image = ImageReader(str(source))
-    image_width, image_height = image.getSize()
-    page_width, page_height = 612, 792
-    scale = min((page_width - 72) / image_width, (page_height - 72) / image_height, 1)
-    width, height = image_width * scale, image_height * scale
-    canvas = Canvas(str(output), pagesize=(page_width, page_height))
-    canvas.drawImage(image, (page_width - width) / 2, (page_height - height) / 2,
-                     width=width, height=height, preserveAspectRatio=True)
-    canvas.save()
-
-
 def normalize_to_pdf(uploaded, directory, index):
     filename = uploaded.filename or ""
     suffix = Path(filename).suffix.lower()
@@ -168,65 +105,24 @@ def normalize_to_pdf(uploaded, directory, index):
     if suffix == ".pdf":
         shutil.copyfile(source, normalized)
     elif suffix == ".docx":
-        docx_to_pdf(source, normalized)
+        document_to_pdf(source, normalized, directory)
     elif suffix in {".png", ".jpg", ".jpeg"}:
-        image_to_pdf(source, normalized)
+        image_convert(source, normalized, ".pdf", quality=85)
     else:
-        text_to_pdf(source, normalized)
+        document_to_pdf(source, normalized, directory)
     checked_output(normalized)
     return normalized, safe_stem(filename, f"document-{index}")
 
 
 def batch_output(source, output, target):
     if target in (".jpg", ".png"):
-        zip_pages(source, output, target[1:])
+        pdf_pages(source, output, target, source.stem)
     elif target == ".docx":
-        pdf_to_docx(source, output)
+        pdf_to_editable_docx(source, output, output.parent)
     elif target == ".pdf":
-        compress_pdf(source, output)
+        pdf_compress(source, output)
     else:
         raise ValueError("Choose .jpg, .png, .docx, or .pdf.")
-
-
-def zip_pages(source, output, extension):
-    prefix = output.parent / "page"
-    renderer = "-jpeg" if extension == "jpg" else "-png"
-    run([tool("pdftoppm"), "-r", "150", renderer, str(source), str(prefix)])
-    pages = sorted(output.parent.glob(f"page-*.{extension}"))
-    if not pages:
-        raise ValueError("No pages were rendered from the PDF.")
-    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-        for index, page in enumerate(pages, 1):
-            archive.write(page, f"{source.stem}-{index}.{extension}")
-
-
-def pdf_to_docx(source, output):
-    reader = PdfReader(str(source))
-    document = Document()
-    for index, page in enumerate(reader.pages):
-        text = page.extract_text() or ""
-        if not text.strip():
-            with tempfile.TemporaryDirectory(prefix="opticonverter-ocr-") as directory:
-                image = Path(directory) / "page"
-                run([tool("pdftoppm"), "-f", str(index + 1), "-l", str(index + 1),
-                     "-r", "150", "-png", str(source), str(image)])
-                rendered = next(Path(directory).glob("page-*.png"), None)
-                if rendered:
-                    ocr = run([tool("tesseract"), str(rendered), "stdout"])
-                    text = ocr.stdout.decode(errors="replace")
-        if index:
-            document.add_page_break()
-        for paragraph in text.splitlines():
-            document.add_paragraph(paragraph)
-    document.save(output)
-
-
-def compress_pdf(source, output):
-    temporary = output.with_name("compressed.pdf")
-    run([tool("gs"), "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
-         "-dPDFSETTINGS=/ebook", "-dNOPAUSE", "-dQUIET", "-dBATCH",
-         f"-sOutputFile={temporary}", str(source)])
-    shutil.copyfile(temporary if temporary.stat().st_size < source.stat().st_size else source, output)
 
 
 def send_result(directory, output, download_name):
@@ -342,20 +238,7 @@ def image_ocr():
         uploaded.save(source)
         if source.stat().st_size > MAX_OCR_UPLOAD_BYTES:
             raise ValueError("OCR images must be 10 MB or smaller.")
-        normalized = Path(directory) / "normalized.png"
-        try:
-            with Image.open(source) as image:
-                if image.width * image.height > MAX_OCR_PIXELS:
-                    return fail("OCR images must be 40 megapixels or smaller.", 413)
-                ImageOps.exif_transpose(image).convert("RGB").save(normalized, "PNG")
-        except OSError as exc:
-            raise ValueError("The uploaded image is invalid or could not be prepared for OCR.") from exc
-        result = run([tool("tesseract"), str(normalized), "stdout"])
-        text = result.stdout.decode(errors="replace").strip()
-        if not text:
-            raise ValueError("OCR did not recognize readable text in this image.")
-        if len(text.encode("utf-8")) > 10 * 1024 * 1024:
-            raise ValueError("OCR text exceeds the 10 MB response limit.")
+        text = extract_image_text(source, directory, MAX_OCR_PIXELS)
         return jsonify(text=text, confidence=None)
     except (ValueError, RuntimeError, OSError) as exc:
         return fail(str(exc), 422)
