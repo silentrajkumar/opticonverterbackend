@@ -5,7 +5,49 @@ import shutil
 import zipfile
 from pathlib import Path
 
+from pypdf import PdfReader, PdfWriter
+
 from .common import ConversionFailure, run, tool
+
+
+def pdf_merge(sources, output):
+    """Merge two or more PDF paths into one PDF in the given order."""
+    if len(sources) < 2:
+        raise ConversionFailure("Upload at least two PDF files in the files field.")
+    writer = PdfWriter()
+    for source in sources:
+        try:
+            reader = PdfReader(str(source))
+            if reader.is_encrypted:
+                raise ConversionFailure("Encrypted PDFs cannot be merged.")
+            for page in reader.pages:
+                writer.add_page(page)
+        except ConversionFailure:
+            raise
+        except Exception as exc:
+            raise ConversionFailure(f"Could not read {Path(source).name} as a valid PDF.") from exc
+    with Path(output).open("wb") as stream:
+        writer.write(stream)
+
+
+def pdf_split(source, output, start, end):
+    """Write an inclusive, one-based page range from a PDF to a new PDF."""
+    try:
+        reader = PdfReader(str(source))
+        if reader.is_encrypted:
+            raise ConversionFailure("Encrypted PDFs cannot be split.")
+        start, end = int(start), int(end)
+    except ConversionFailure:
+        raise
+    except (TypeError, ValueError) as exc:
+        raise ConversionFailure("Start and end must be whole page numbers.") from exc
+    if start < 1 or end < start or end > len(reader.pages):
+        raise ConversionFailure("The page range is invalid.")
+    writer = PdfWriter()
+    for page in reader.pages[start - 1:end]:
+        writer.add_page(page)
+    with Path(output).open("wb") as stream:
+        writer.write(stream)
 
 
 def pdf_pages(source, output, target, output_stem=None):

@@ -1,4 +1,3 @@
-import io
 import os
 import shutil
 import tempfile
@@ -29,7 +28,7 @@ from converters import (
 from converters.image_converter import image_convert
 from converters.office_converter import document_to_pdf
 from converters.ocr_converter import image_ocr as extract_image_text
-from converters.pdf_converter import pdf_compress, pdf_pages, pdf_to_editable_docx
+from converters.pdf_converter import pdf_compress, pdf_merge, pdf_pages, pdf_split, pdf_to_editable_docx
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
@@ -286,21 +285,24 @@ def ai_convert():
 def merge():
     directory = tempfile.mkdtemp(prefix="opticonverter-")
     try:
-        files = request.files.getlist("files")
+        files = [uploaded for uploaded in request.files.getlist("files")
+                 if uploaded and uploaded.filename]
         if len(files) < 2:
             raise ValueError("Upload at least two PDF files in the files field.")
-        writer = PdfWriter()
-        for uploaded in files:
+        sources = []
+        for index, uploaded in enumerate(files, 1):
             if not uploaded.filename.lower().endswith(".pdf"):
                 raise ValueError("Only PDF files are supported.")
-            reader = PdfReader(io.BytesIO(uploaded.read(MAX_UPLOAD_BYTES + 1)))
-            for page in reader.pages:
-                writer.add_page(page)
+            source = Path(directory) / f"input-{index}.pdf"
+            uploaded.save(source)
+            if not source.stat().st_size:
+                raise ValueError(f"{uploaded.filename} is empty.")
+            sources.append(source)
         output = Path(directory) / "merged.pdf"
-        with output.open("wb") as stream:
-            writer.write(stream)
+        pdf_merge(sources, output)
+        checked_output(output)
         return send_result(directory, output, "merged.pdf")
-    except (ValueError, RuntimeError, OSError, PdfReadError) as exc:
+    except (ValueError, RuntimeError, OSError, PdfReadError, ConversionFailure) as exc:
         shutil.rmtree(directory, ignore_errors=True)
         return fail(str(exc), 422)
 
@@ -310,19 +312,17 @@ def split():
     directory = source = None
     try:
         directory, source, stem = checked_upload()
-        reader = PdfReader(str(source))
-        start = int(request.form.get("start", "1"))
-        end = int(request.form.get("end", str(len(reader.pages))))
-        if start < 1 or end < start or end > len(reader.pages):
-            raise ValueError("The page range is invalid.")
+        try:
+            start = int(request.form.get("start", "1"))
+            end_value = request.form.get("end", "")
+            end = int(end_value) if end_value else len(PdfReader(str(source)).pages)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Start and end must be whole page numbers.") from exc
         output = Path(directory) / f"{stem}-pages-{start}-{end}.pdf"
-        writer = PdfWriter()
-        for page in reader.pages[start - 1:end]:
-            writer.add_page(page)
-        with output.open("wb") as stream:
-            writer.write(stream)
+        pdf_split(source, output, start, end)
+        checked_output(output)
         return send_result(directory, output, output.name)
-    except (ValueError, RuntimeError) as exc:
+    except (ValueError, RuntimeError, OSError, PdfReadError, ConversionFailure) as exc:
         if directory:
             shutil.rmtree(directory, ignore_errors=True)
         return fail(str(exc), 422)
