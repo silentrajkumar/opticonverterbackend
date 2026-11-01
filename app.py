@@ -10,11 +10,13 @@ from flask import Flask, jsonify, request, send_file
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
 from docx import Document
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
 CONVERSION_TIMEOUT_SECONDS = 120
+MAX_BATCH_FILES = 20
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
@@ -82,6 +84,91 @@ def checked_output(path):
         raise ValueError("The converted file is larger than the 100 MB output limit.")
 
 
+def safe_stem(filename, fallback):
+    stem = Path(filename).stem.strip()
+    return stem or fallback
+
+
+def text_to_pdf(source, output):
+    canvas = Canvas(str(output))
+    width, height = 612, 792
+    y = height - 48
+    canvas.setFont("Helvetica", 11)
+    for line in source.read_text(encoding="utf-8", errors="replace").splitlines() or [""]:
+        if y < 48:
+            canvas.showPage()
+            canvas.setFont("Helvetica", 11)
+            y = height - 48
+        canvas.drawString(48, y, line[:120])
+        y -= 16
+    canvas.save()
+
+
+def docx_to_pdf(source, output):
+    document = Document(str(source))
+    canvas = Canvas(str(output))
+    width, height = 612, 792
+    y = height - 48
+    canvas.setFont("Helvetica", 11)
+    for paragraph in document.paragraphs:
+        for line in (paragraph.text or "").splitlines() or [""]:
+            if y < 48:
+                canvas.showPage()
+                canvas.setFont("Helvetica", 11)
+                y = height - 48
+            canvas.drawString(48, y, line[:120])
+            y -= 16
+    canvas.save()
+
+
+def image_to_pdf(source, output):
+    image = ImageReader(str(source))
+    image_width, image_height = image.getSize()
+    page_width, page_height = 612, 792
+    scale = min((page_width - 72) / image_width, (page_height - 72) / image_height, 1)
+    width, height = image_width * scale, image_height * scale
+    canvas = Canvas(str(output), pagesize=(page_width, page_height))
+    canvas.drawImage(image, (page_width - width) / 2, (page_height - height) / 2,
+                     width=width, height=height, preserveAspectRatio=True)
+    canvas.save()
+
+
+def normalize_to_pdf(uploaded, directory, index):
+    filename = uploaded.filename or ""
+    suffix = Path(filename).suffix.lower()
+    supported = {".pdf", ".docx", ".png", ".jpg", ".jpeg", ".txt", ".md"}
+    if suffix not in supported:
+        raise ValueError(
+            "Supported input files are PDF, DOCX, PNG, JPG, TXT, and Markdown."
+        )
+    source = Path(directory) / f"input-{index}{suffix}"
+    uploaded.save(source)
+    if source.stat().st_size == 0:
+        raise ValueError(f"{filename} is empty.")
+    normalized = Path(directory) / f"normalized-{index}.pdf"
+    if suffix == ".pdf":
+        shutil.copyfile(source, normalized)
+    elif suffix == ".docx":
+        docx_to_pdf(source, normalized)
+    elif suffix in {".png", ".jpg", ".jpeg"}:
+        image_to_pdf(source, normalized)
+    else:
+        text_to_pdf(source, normalized)
+    checked_output(normalized)
+    return normalized, safe_stem(filename, f"document-{index}")
+
+
+def batch_output(source, output, target):
+    if target in (".jpg", ".png"):
+        zip_pages(source, output, target[1:])
+    elif target == ".docx":
+        pdf_to_docx(source, output)
+    elif target == ".pdf":
+        compress_pdf(source, output)
+    else:
+        raise ValueError("Choose .jpg, .png, .docx, or .pdf.")
+
+
 def zip_pages(source, output, extension):
     prefix = output.parent / "page"
     renderer = "-jpeg" if extension == "jpg" else "-png"
@@ -141,6 +228,10 @@ def health():
 def formats():
     return jsonify({
         "pdf": [".jpg", ".png", ".docx", ".pdf"],
+        "ai": {
+            "input": [".pdf", ".docx", ".png", ".jpg", ".jpeg", ".txt", ".md"],
+            "output": [".jpg", ".png", ".docx", ".pdf"],
+        },
         "operations": ["merge", "split", "rotate", "watermark", "metadata"],
     })
 
@@ -164,6 +255,41 @@ def convert():
     except (ValueError, RuntimeError) as exc:
         if directory:
             shutil.rmtree(directory, ignore_errors=True)
+        return fail(str(exc), 422)
+
+
+@app.post("/ai/convert")
+@app.post("/convert/batch")
+def ai_convert():
+    directory = tempfile.mkdtemp(prefix="opticonverter-ai-")
+    try:
+        files = [uploaded for uploaded in request.files.getlist("files")
+                 if uploaded and uploaded.filename]
+        if not files:
+            raise ValueError("Upload one or more documents in the files field.")
+        if len(files) > MAX_BATCH_FILES:
+            raise ValueError(f"Upload no more than {MAX_BATCH_FILES} documents at once.")
+        target = request.args.get("format", "").lower()
+        if target not in {".jpg", ".png", ".docx", ".pdf"}:
+            raise ValueError("Choose .jpg, .png, .docx, or .pdf.")
+
+        archive_path = Path(directory) / "converted-documents.zip"
+        used_names = set()
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for index, uploaded in enumerate(files, 1):
+                source, stem = normalize_to_pdf(uploaded, directory, index)
+                output_suffix = ".zip" if target in {".jpg", ".png"} else target
+                output = Path(directory) / f"output-{index}{output_suffix}"
+                batch_output(source, output, target)
+                checked_output(output)
+                name = f"{stem}{output_suffix}"
+                if name in used_names:
+                    name = f"{stem}-{index}{output_suffix}"
+                used_names.add(name)
+                archive.write(output, name)
+        return send_result(directory, archive_path, "converted-documents.zip")
+    except (ValueError, RuntimeError, OSError, PdfReadError) as exc:
+        shutil.rmtree(directory, ignore_errors=True)
         return fail(str(exc), 422)
 
 
