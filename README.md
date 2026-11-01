@@ -6,7 +6,7 @@ Python API for the PDF conversion tools used by OptiConverter.
 
 - PDF compression with Ghostscript, retaining the original when compression would increase its size.
 - PDF to JPG/PNG conversion, returning all pages in a ZIP archive.
-- PDF to DOCX conversion using text extraction and OCR for scanned pages.
+- PDF to DOCX conversion with editable text, detected native tables, and OCR-positioned text on scanned pages.
 - PDF merge, page-range split, rotation, watermark, and metadata operations.
 - AI mode for dropdown-selected conversion of supported image, PDF, Office, text, audio, video, and archive formats.
 - Deterministic batch conversion of mixed PDF, DOCX, image, text, and Markdown uploads.

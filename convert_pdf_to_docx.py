@@ -1,6 +1,9 @@
 """Rebuild PDF text and detected tables as editable Word content."""
 
 import bisect
+import csv
+import io
+import json
 import re
 import sys
 from pathlib import Path
@@ -8,7 +11,7 @@ from pathlib import Path
 import fitz
 from docx import Document
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
@@ -172,7 +175,123 @@ def _append_ocr_page(document, text, page_number):
             document.add_paragraph(line.strip())
 
 
-def convert(source, destination, ocr_text_path=None):
+def _parse_ocr_tsv(tsv):
+    reader = csv.DictReader(io.StringIO(tsv), delimiter="\t")
+    page_width = page_height = 0
+    grouped = {}
+    for row in reader:
+        if row.get("level") == "1":
+            page_width = int(row.get("width", 0) or 0)
+            page_height = int(row.get("height", 0) or 0)
+        if row.get("level") != "5":
+            continue
+        text = (row.get("text") or "").strip()
+        try:
+            confidence = float(row.get("conf", "-1"))
+        except ValueError:
+            confidence = -1
+        if not text or confidence < 0:
+            continue
+        key = (row.get("block_num"), row.get("par_num"), row.get("line_num"))
+        grouped.setdefault(key, []).append({
+            "text": text,
+            "left": int(row.get("left", 0) or 0),
+            "top": int(row.get("top", 0) or 0),
+            "width": int(row.get("width", 0) or 0),
+            "height": int(row.get("height", 0) or 0),
+        })
+
+    lines = []
+    for words in grouped.values():
+        words.sort(key=lambda word: word["left"])
+        lines.append({
+            "words": words,
+            "left": min(word["left"] for word in words),
+            "top": min(word["top"] for word in words),
+            "height": max(word["height"] for word in words),
+        })
+
+    # Tesseract may split aligned text columns into separate blocks. Combine
+    # lines on the same visual row so tab stops keep their columns editable.
+    rows = []
+    for line in sorted(lines, key=lambda item: (item["top"], item["left"])):
+        center = line["top"] + line["height"] / 2
+        match = next((row for row in reversed(rows)
+                      if abs(center - row["center"]) <= max(7, min(line["height"], row["height"]) * 0.55)), None)
+        if match:
+            match["lines"].append(line)
+            match["center"] = sum(item["top"] + item["height"] / 2 for item in match["lines"]) / len(match["lines"])
+            match["height"] = max(match["height"], line["height"])
+        else:
+            rows.append({"center": center, "height": line["height"], "lines": [line]})
+
+    merged = []
+    for row in rows:
+        words = sorted((word for line in row["lines"] for word in line["words"]), key=lambda word: word["left"])
+        merged.append({
+            "words": words,
+            "left": min(word["left"] for word in words),
+            "top": min(word["top"] for word in words),
+            "height": max(word["height"] for word in words),
+        })
+    return page_width, page_height, merged
+
+
+def ocr_tsv_to_text(tsv):
+    _width, _height, lines = _parse_ocr_tsv(tsv)
+    return "\n".join(" ".join(word["text"] for word in line["words"]) for line in lines)
+
+
+def _append_positioned_ocr_page(document, tsv, section):
+    image_width, image_height, lines = _parse_ocr_tsv(tsv)
+    if not lines or not image_width or not image_height:
+        return False
+
+    scale_x = section.page_width.pt / image_width
+    # Leave a small baseline allowance for Word's font metrics, which are a
+    # little taller than the pixel boxes reported by Tesseract.
+    scale_y = section.page_height.pt * 0.96 / image_height
+    top_margin = section.top_margin.pt
+    printable_width = section.page_width.pt - section.left_margin.pt - section.right_margin.pt
+    cursor_bottom = top_margin
+
+    for line in lines:
+        words = line["words"]
+        y = line["top"] * scale_y
+        height = max(1, line["height"] * scale_y)
+        font_size = max(6, min(14, height * 0.82))
+        line_height = max(font_size * 1.08, height * 1.15)
+
+        paragraph = document.add_paragraph()
+        paragraph.paragraph_format.left_indent = Pt(0)
+        paragraph.paragraph_format.space_before = Pt(max(0, y - cursor_bottom))
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing = Pt(line_height)
+        previous_end = None
+        for word in words:
+            word_position = word["left"] * scale_x
+            if previous_end is None:
+                paragraph.paragraph_format.tab_stops.add_tab_stop(Pt(min(printable_width, max(1, word_position))), WD_TAB_ALIGNMENT.LEFT)
+                paragraph.add_run("\t")
+            else:
+                gap = word["left"] - previous_end
+                if gap * scale_x > max(18, font_size * 2.5):
+                    tab_position = min(printable_width, max(1, word_position))
+                    paragraph.paragraph_format.tab_stops.add_tab_stop(Pt(tab_position), WD_TAB_ALIGNMENT.LEFT)
+                    paragraph.add_run("\t")
+                else:
+                    paragraph.add_run(" ")
+            run = paragraph.add_run(word["text"])
+            run.font.name = "Arial"
+            run.font.size = Pt(font_size)
+            if len(words) <= 5 and len(word["text"]) > 2 and word["text"].isupper():
+                run.bold = True
+            previous_end = word["left"] + word["width"]
+        cursor_bottom = max(cursor_bottom, y) + line_height
+    return True
+
+
+def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
     pdf = fitz.open(source)
     if not pdf.page_count:
         raise ValueError("The PDF contains no pages.")
@@ -180,10 +299,11 @@ def convert(source, destination, ocr_text_path=None):
     section = document.sections[0]
     section.page_width = Pt(pdf[0].rect.width)
     section.page_height = Pt(pdf[0].rect.height)
-    section.top_margin = Pt(24)
-    section.bottom_margin = Pt(24)
-    section.left_margin = Pt(26)
-    section.right_margin = Pt(26)
+    scanned_only = bool(ocr_layout_path) and all(not page.get_text().strip() for page in pdf)
+    section.top_margin = Pt(0 if scanned_only else 24)
+    section.bottom_margin = Pt(0 if scanned_only else 24)
+    section.left_margin = Pt(0 if scanned_only else 26)
+    section.right_margin = Pt(0 if scanned_only else 26)
     printable_width = section.page_width - section.left_margin - section.right_margin
 
     normal = document.styles["Normal"]
@@ -194,6 +314,7 @@ def convert(source, destination, ocr_text_path=None):
     normal.paragraph_format.line_spacing = 1
 
     ocr_pages = Path(ocr_text_path).read_text(encoding="utf-8").split("\f") if ocr_text_path else []
+    ocr_layout_pages = json.loads(Path(ocr_layout_path).read_text(encoding="utf-8")) if ocr_layout_path else []
     for page_index, page in enumerate(pdf):
         try:
             tables = page.find_tables().tables
@@ -206,7 +327,11 @@ def convert(source, destination, ocr_text_path=None):
                 if not _line_is_in_table(line, table_bounds):
                     elements.append((line["bbox"][1], line["bbox"][0], "line", line))
 
-        if not elements and page_index < len(ocr_pages):
+        if not elements and page_index < len(ocr_layout_pages) and ocr_layout_pages[page_index]:
+            if not _append_positioned_ocr_page(document, ocr_layout_pages[page_index], section):
+                if page_index < len(ocr_pages):
+                    _append_ocr_page(document, ocr_pages[page_index], page_index + 1)
+        elif not elements and page_index < len(ocr_pages):
             _append_ocr_page(document, ocr_pages[page_index], page_index + 1)
         else:
             elements.sort(key=lambda item: (round(item[0] / 3) * 3, item[1]))

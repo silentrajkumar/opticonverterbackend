@@ -1,6 +1,7 @@
 """Format-selected conversions used by the OptiConverter AI mode endpoint."""
 
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -99,10 +100,11 @@ def pdf_compress(source, output):
 
 def pdf_to_editable_docx(source, output, directory):
     import fitz
-    from convert_pdf_to_docx import convert
+    from convert_pdf_to_docx import convert, ocr_tsv_to_text
 
     pdf = fitz.open(source)
     ocr_pages = [""] * pdf.page_count
+    ocr_layout_pages = [""] * pdf.page_count
     try:
         for index, page in enumerate(pdf):
             if page.get_text().strip():
@@ -112,15 +114,18 @@ def pdf_to_editable_docx(source, output, directory):
                  "-r", "180", "-png", str(source), str(prefix)])
             rendered = next(Path(directory).glob(f"ocr-page-{index + 1}-*.png"), None)
             if rendered:
-                result = run([shutil.which("tesseract") or "tesseract", str(rendered), "stdout"])
-                ocr_pages[index] = result.stdout.decode(errors="replace")
+                result = run([shutil.which("tesseract") or "tesseract", str(rendered), "stdout", "tsv"])
+                ocr_layout_pages[index] = result.stdout.decode(errors="replace")
+                ocr_pages[index] = ocr_tsv_to_text(ocr_layout_pages[index])
     finally:
         pdf.close()
 
     ocr_path = Path(directory) / "ocr.txt"
     if any(page.strip() for page in ocr_pages):
         ocr_path.write_text("\f".join(ocr_pages), encoding="utf-8")
-        convert(source, output, str(ocr_path))
+        ocr_layout_path = Path(directory) / "ocr-layout.json"
+        ocr_layout_path.write_text(json.dumps(ocr_layout_pages), encoding="utf-8")
+        convert(source, output, str(ocr_path), str(ocr_layout_path))
     else:
         convert(source, output)
 
