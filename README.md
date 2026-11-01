@@ -28,8 +28,9 @@ The API listens on port `8000` by default.
 
 - `GET /health` returns `{ "status": "ok" }`.
 - `GET /formats` returns supported conversion formats.
-- `POST /convert?format=.jpg|.png|.docx|.pdf` accepts one multipart file field named `file`.
+- `POST /convert?format=<extension>` accepts one multipart `file` and supports the same dropdown-selected single-file conversions as AI mode.
 - `POST /ai-convert?format=<extension>` accepts one multipart `file` and converts it to the selected dropdown format. Optional query parameters are `quality`, `compression`, and `compress=any`. It supports image, PDF, Office, text, media, and archive conversion pairs implemented by the service.
+- `POST /api/ocr` accepts one multipart image `file` and returns recognized English text as JSON. Images are limited to 10 MB and 40 megapixels.
 - `POST /ai/convert?format=.jpg|.png|.docx|.pdf` accepts up to 20 mixed files in the
   `files` field and returns one ZIP containing the converted result for each file.
   `/convert/batch` is an alias for this endpoint. Supported inputs are PDF, DOCX,

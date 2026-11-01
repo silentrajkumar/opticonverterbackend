@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_file
+from werkzeug.exceptions import RequestEntityTooLarge
+from PIL import Image, ImageOps
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
 from docx import Document
@@ -32,6 +34,8 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
 CONVERSION_TIMEOUT_SECONDS = 120
 MAX_BATCH_FILES = 20
+MAX_OCR_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_OCR_PIXELS = 40_000_000
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
@@ -241,39 +245,38 @@ def health():
 
 @app.get("/formats")
 def formats():
+    document_inputs = sorted(OFFICE_INPUTS | {".txt"})
+    ai_inputs = sorted({".pdf", ".txt"} | IMAGE_INPUTS | OFFICE_INPUTS | VIDEO_INPUTS | AUDIO_INPUTS | ARCHIVE_INPUTS)
+    ai_outputs = sorted(IMAGE_OUTPUTS | OFFICE_OUTPUTS | VIDEO_OUTPUTS | AUDIO_OUTPUTS | ARCHIVE_OUTPUTS | {".pdf", ".gif", ".docx"})
     return jsonify({
+        "max_upload_bytes": MAX_UPLOAD_BYTES,
+        "native_tools": {"ffmpeg": bool(shutil.which("ffmpeg")), "ghostscript": bool(shutil.which("gs")), "libreoffice": bool(shutil.which("libreoffice")), "poppler": bool(shutil.which("pdftoppm")), "tesseract": bool(shutil.which("tesseract"))},
+        "ocr_engine": "tesseract",
+        "ocr_endpoint_configured": bool(shutil.which("tesseract")),
+        "conversions": {
+            "images": {"input": sorted(IMAGE_INPUTS), "output": sorted(IMAGE_OUTPUTS | {".pdf"}), "processing": "Python Pillow and pillow-heif"},
+            "pdf": {"input": [".pdf"], "output": [".jpg", ".jpeg", ".png", ".pdf", ".docx"], "processing": "Poppler, Ghostscript, PyMuPDF, and Tesseract"},
+            "documents": {"input": document_inputs, "output": sorted(OFFICE_OUTPUTS), "processing": "LibreOffice"},
+            "video": {"input": sorted(VIDEO_INPUTS), "output": sorted(VIDEO_OUTPUTS | AUDIO_OUTPUTS | {".gif"}), "processing": "FFmpeg"},
+            "audio": {"input": sorted(AUDIO_INPUTS), "output": sorted(AUDIO_OUTPUTS), "processing": "FFmpeg"},
+            "archives": {"input": sorted(ARCHIVE_INPUTS), "output": sorted(ARCHIVE_OUTPUTS), "processing": "Python zipfile and tarfile"},
+        },
         "pdf": [".jpg", ".png", ".docx", ".pdf"],
         "ai": {
             "endpoint": "/ai-convert",
-            "input": sorted({".pdf", ".txt"} | IMAGE_INPUTS | OFFICE_INPUTS | VIDEO_INPUTS | AUDIO_INPUTS | ARCHIVE_INPUTS),
-            "output": sorted(IMAGE_OUTPUTS | OFFICE_OUTPUTS | VIDEO_OUTPUTS | AUDIO_OUTPUTS | ARCHIVE_OUTPUTS | {".pdf", ".gif", ".docx"}),
+            "input": ai_inputs,
+            "output": ai_outputs,
         },
         "operations": ["merge", "split", "rotate", "watermark", "metadata"],
     })
 
 
+@app.errorhandler(RequestEntityTooLarge)
+def request_too_large(_error):
+    return fail("Files must be 50 MB or smaller.", 413)
+
+
 @app.post("/convert")
-def convert():
-    directory = source = None
-    try:
-        directory, source, stem = checked_upload()
-        target = request.args.get("format", "").lower()
-        output = Path(directory) / f"{stem}{'.zip' if target in ('.jpg', '.png') else target}"
-        if target in (".jpg", ".png"):
-            zip_pages(source, output, target[1:])
-        elif target == ".docx":
-            pdf_to_docx(source, output)
-        elif target == ".pdf":
-            compress_pdf(source, output)
-        else:
-            raise ValueError("Choose .jpg, .png, .docx, or .pdf.")
-        return send_result(directory, output, output.name)
-    except (ValueError, RuntimeError) as exc:
-        if directory:
-            shutil.rmtree(directory, ignore_errors=True)
-        return fail(str(exc), 422)
-
-
 @app.post("/ai-convert")
 def ai_mode_convert():
     directory = None
@@ -313,6 +316,43 @@ def ai_mode_convert():
         if directory:
             shutil.rmtree(directory, ignore_errors=True)
         return fail(str(exc), 422)
+
+
+@app.post("/api/ocr")
+def image_ocr():
+    directory = None
+    try:
+        uploaded = request.files.get("file")
+        if not uploaded or not uploaded.filename:
+            raise ValueError("Upload a PNG, JPG, WebP, BMP, or TIFF image.")
+        extension = Path(uploaded.filename).suffix.lower()
+        if extension not in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}:
+            return fail("Upload a PNG, JPG, WebP, BMP, or TIFF image.", 415)
+        directory = tempfile.mkdtemp(prefix="opticonverter-ocr-")
+        source = Path(directory) / "upload"
+        uploaded.save(source)
+        if source.stat().st_size > MAX_OCR_UPLOAD_BYTES:
+            raise ValueError("OCR images must be 10 MB or smaller.")
+        normalized = Path(directory) / "normalized.png"
+        try:
+            with Image.open(source) as image:
+                if image.width * image.height > MAX_OCR_PIXELS:
+                    return fail("OCR images must be 40 megapixels or smaller.", 413)
+                ImageOps.exif_transpose(image).convert("RGB").save(normalized, "PNG")
+        except OSError as exc:
+            raise ValueError("The uploaded image is invalid or could not be prepared for OCR.") from exc
+        result = run([tool("tesseract"), str(normalized), "stdout"])
+        text = result.stdout.decode(errors="replace").strip()
+        if not text:
+            raise ValueError("OCR did not recognize readable text in this image.")
+        if len(text.encode("utf-8")) > 10 * 1024 * 1024:
+            raise ValueError("OCR text exceeds the 10 MB response limit.")
+        return jsonify(text=text, confidence=None)
+    except (ValueError, RuntimeError, OSError) as exc:
+        return fail(str(exc), 422)
+    finally:
+        if directory:
+            shutil.rmtree(directory, ignore_errors=True)
 
 
 @app.post("/ai/convert")
