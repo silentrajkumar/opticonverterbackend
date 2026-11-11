@@ -163,10 +163,12 @@ Add these repository secrets in the same settings page:
 
 - `OCI_SSH_PRIVATE_KEY`: the private key for the `ubuntu` account. Never commit
   this key or put it in a repository variable.
-- `OCI_KNOWN_HOSTS`: the SSH host-key entry for the instance, created with
-  `ssh-keyscan -H 129.225.109.39`. Verify its fingerprint against the instance
-  before saving it; the currently observed ED25519 fingerprint is
-  `SHA256:rXkLOEq79nBZ2ErtZmeGjaDq5PlxdFNvqWWHWlEx9vw`.
+
+The workflow fetches the instance's ED25519 SSH host key and verifies its
+fingerprint (`SHA256:rXkLOEq79nBZ2ErtZmeGjaDq5PlxdFNvqWWHWlEx9vw`) before
+connecting. This prevents an unverified `ssh-keyscan` result from being trusted.
+If you change `OCI_HOST` to a different instance, update the expected host
+fingerprint in the workflow as well.
 
 The VM must allow this SSH key to run `sudo -n` without an interactive password.
 The deployment directory and production environment file must already exist at

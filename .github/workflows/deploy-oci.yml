@@ -43,7 +43,6 @@ jobs:
       OCI_HOST: ${{ vars.OCI_HOST || '129.225.109.39' }}
       OCI_USER: ${{ vars.OCI_USER || 'ubuntu' }}
       OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
-      OCI_KNOWN_HOSTS: ${{ secrets.OCI_KNOWN_HOSTS }}
     steps:
       - name: Deploy latest main revision
         shell: bash
@@ -53,7 +52,6 @@ jobs:
           : "${OCI_HOST:?Set the OCI_HOST repository variable}"
           : "${OCI_USER:?Set the OCI_USER repository variable}"
           : "${OCI_SSH_PRIVATE_KEY:?Set the OCI_SSH_PRIVATE_KEY repository secret}"
-          : "${OCI_KNOWN_HOSTS:?Set the OCI_KNOWN_HOSTS repository secret}"
 
           install -d -m 700 "$HOME/.ssh"
           key_file="$RUNNER_TEMP/oci_deploy_key"
@@ -62,7 +60,14 @@ jobs:
 
           printf '%s\n' "$OCI_SSH_PRIVATE_KEY" > "$key_file"
           chmod 600 "$key_file"
-          printf '%s\n' "$OCI_KNOWN_HOSTS" > "$known_hosts_file"
+          ssh-keygen -y -f "$key_file" >/dev/null
+          ssh-keyscan -T 10 -t ed25519 "$OCI_HOST" > "$known_hosts_file" 2>/dev/null
+          actual_fingerprint="$(ssh-keygen -lf "$known_hosts_file" | awk '{print $2}')"
+          expected_fingerprint="SHA256:rXkLOEq79nBZ2ErtZmeGjaDq5PlxdFNvqWWHWlEx9vw"
+          if [[ "$actual_fingerprint" != "$expected_fingerprint" ]]; then
+            echo "SSH host fingerprint mismatch for $OCI_HOST; refusing to connect." >&2
+            exit 1
+          fi
           ssh-keygen -F "$OCI_HOST" -f "$known_hosts_file" >/dev/null
 
           ssh \
