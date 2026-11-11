@@ -17,7 +17,9 @@ def image_ocr(source, work_directory, max_pixels=40_000_000):
     except ConversionFailure:
         raise
     except OSError as exc:
-        raise ConversionFailure("The uploaded image is invalid or could not be prepared for OCR.") from exc
+        raise ConversionFailure(
+            "The uploaded image is invalid or could not be prepared for OCR."
+        ) from exc
 
     result = run([tool("tesseract"), str(normalized), "stdout"])
     text = result.stdout.decode(errors="replace").strip()

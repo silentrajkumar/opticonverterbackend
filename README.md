@@ -11,23 +11,49 @@ Python API for the PDF conversion tools used by OptiConverter.
 - AI mode for dropdown-selected conversion of supported image, PDF, Office, text, audio, video, and archive formats.
 - Deterministic batch conversion of mixed PDF, DOCX, image, text, and Markdown uploads.
 
+## Project structure
+
+```text
+src/
+├── ai_converter.py                 # legacy import compatibility
+├── app.py                          # legacy launch compatibility
+├── convert_pdf_to_docx.py          # legacy import compatibility
+└── opticonverterbackend/
+    ├── app.py
+    ├── ai_converter.py
+    ├── convert_pdf_to_docx.py
+    └── converters/
+        ├── archive_converter.py
+        ├── audio_converter.py
+        ├── image_converter.py
+        ├── office_converter.py
+        ├── pdf_converter.py
+        └── ...
+```
+
+`pyproject.toml` defines the installable package, test settings, and Ruff
+configuration; `requirements.txt` supplies runtime dependencies. Root-level Python
+files are reserved for project configuration and documentation. Legacy import
+modules are kept under `src/` and included in the installed distribution.
+
 ## Converter modules
 
-Format-specific conversion logic is separated under `converters/`:
+The installable application lives under `src/opticonverterbackend/`. Format-specific
+conversion logic is separated under `src/opticonverterbackend/converters/`:
 
 - `image_converter.py` handles raster image conversion.
 - `pdf_converter.py` handles PDF rendering, compression, and editable DOCX export.
 - `office_converter.py` handles Office and text documents.
 - `audio_converter.py` and `video_converter.py` provide separate FFmpeg engines for each media type.
-- `media_converter.py` remains as a compatibility facade for older imports.
 - `text_converter.py` lays out plain text and Markdown as PDF.
 - `ocr_converter.py` handles OCR extraction from uploaded images.
 - `archive_converter.py` handles ZIP and TAR archives.
 - `router.py` validates the input/output pair and dispatches to the matching converter.
 - `common.py` contains shared process helpers and conversion errors.
 
-`app.py` owns the HTTP routes. `ai_converter.py` remains as a small compatibility
-module for existing imports; new converter code belongs in `converters/`.
+`opticonverterbackend.app` owns the HTTP routes. The top-level modules directly
+under `src/` preserve older imports and launch commands; new application code
+belongs in the `opticonverterbackend` package.
 
 ## Run locally
 
@@ -43,12 +69,39 @@ To run the API directly with Python, install Python 3.12+, Ghostscript, Poppler,
 
 ```sh
 python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python app.py
+```
+
+Activate the virtual environment:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+On macOS or Linux, use:
+
+```sh
+source .venv/bin/activate
+```
+
+Then install the package and run the API:
+
+```sh
+python -m pip install -e .
+python -m opticonverterbackend
 ```
 
 The API listens on port `8000` by default.
+
+### Development and tests
+
+Install the development tools and run the test suite and linter with:
+
+```sh
+python -m pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
+python -m ruff format --check .
+```
 
 ### API
 
@@ -72,7 +125,7 @@ Uploads are limited to 50 MB, generated files to 100 MB, and conversions to two 
 
 ## Docker
 
-The API listens on port `8000` by default. Start locally with `python app.py`, or use
+The API listens on port `8000` by default. Start locally with `python -m opticonverterbackend`, or use
 the included Docker Compose configuration. CORS is selected by the environment file:
 local mode allows `http://localhost:5173`, while production mode allows
 `https://opticonverter.com` and `https://www.opticonverter.com`.

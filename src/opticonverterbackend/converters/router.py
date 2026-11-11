@@ -14,7 +14,9 @@ from .video_converter import VIDEO_INPUTS, VIDEO_OUTPUTS, video_convert
 
 
 def convert_file(source, output, input_name, target, quality=85, compression=None, compress=False):
-    source_ext = ".tar.gz" if input_name.lower().endswith(".tar.gz") else Path(input_name).suffix.lower()
+    source_ext = (
+        ".tar.gz" if input_name.lower().endswith(".tar.gz") else Path(input_name).suffix.lower()
+    )
     target = target.lower()
 
     if compress:
@@ -29,7 +31,7 @@ def convert_file(source, output, input_name, target, quality=85, compression=Non
         if target not in OFFICE_OUTPUTS:
             raise ConversionFailure(f"Conversion from {source_ext} to {target} is not supported.")
         office_convert(source, output, target, output.parent)
-    elif source_ext == ".txt" and target == ".pdf":
+    elif source_ext in {".txt", ".md"} and target == ".pdf":
         text_pdf(source, output)
     elif source_ext in VIDEO_INPUTS and target in VIDEO_OUTPUTS | AUDIO_OUTPUTS | {".gif"}:
         video_convert(source, output, source_ext, target, compression, quality)
@@ -38,7 +40,9 @@ def convert_file(source, output, input_name, target, quality=85, compression=Non
     elif source_ext in ARCHIVE_INPUTS and target in ARCHIVE_OUTPUTS:
         archive_convert(source, output, target)
     else:
-        raise ConversionFailure(f"Conversion from {source_ext or 'this file type'} to {target} is not supported.")
+        raise ConversionFailure(
+            f"Conversion from {source_ext or 'this file type'} to {target} is not supported."
+        )
 
 
 def _convert_pdf(source, output, target, input_name):
@@ -47,7 +51,9 @@ def _convert_pdf(source, output, target, input_name):
     elif target == ".pdf":
         pdf_compress(source, output)
     elif target in {".jpg", ".jpeg", ".png"}:
-        source_stem = input_name[:-4] if input_name.lower().endswith(".pdf") else Path(input_name).stem
+        source_stem = (
+            input_name[:-4] if input_name.lower().endswith(".pdf") else Path(input_name).stem
+        )
         pdf_pages(source, output, target, source_stem)
     else:
         raise ConversionFailure(f"Conversion from .pdf to {target} is not supported.")

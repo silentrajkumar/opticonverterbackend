@@ -6,6 +6,7 @@ from .common import ConversionFailure
 
 try:
     from pillow_heif import register_heif_opener
+
     register_heif_opener()
 except ImportError:
     pass
@@ -21,7 +22,16 @@ def image_convert(source, output, target, quality):
             image = ImageOps.exif_transpose(opened)
             image.seek(0)
             if target == ".pdf":
-                image.convert("RGB").save(output, "PDF", resolution=150)
+                # Pillow's direct RGBA -> RGB conversion makes transparent pixels
+                # black. Flatten onto white so logos and screenshots stay legible.
+                if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+                    rgba = image.convert("RGBA")
+                    background = Image.new("RGB", rgba.size, "white")
+                    background.paste(rgba, mask=rgba.getchannel("A"))
+                    image = background
+                else:
+                    image = image.convert("RGB")
+                image.save(output, "PDF", resolution=150)
                 return
 
             image_format = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}[target]
@@ -40,4 +50,6 @@ def image_convert(source, output, target, quality):
             options = {"quality": quality} if image_format in {"JPEG", "WEBP"} else {}
             image.save(output, image_format, **options)
     except (OSError, ValueError, KeyError) as exc:
-        raise ConversionFailure("The image format could not be decoded. HEIC files require pillow-heif support.") from exc
+        raise ConversionFailure(
+            "The image format could not be decoded. HEIC files require pillow-heif support."
+        ) from exc

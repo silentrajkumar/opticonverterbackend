@@ -20,9 +20,13 @@ def run(command, timeout=120):
     try:
         return subprocess.run(command, check=True, capture_output=True, timeout=timeout)
     except FileNotFoundError as exc:
-        raise ConversionFailure(f"{Path(command[0]).name} is required for this conversion.") from exc
+        raise ConversionFailure(
+            f"{Path(command[0]).name} is required for this conversion."
+        ) from exc
     except subprocess.TimeoutExpired as exc:
         raise ConversionFailure("The conversion exceeded the two-minute time limit.") from exc
     except subprocess.CalledProcessError as exc:
         detail = exc.stderr.decode(errors="replace").strip()
-        raise ConversionFailure(detail or "The conversion tool could not process this file.") from exc
+        raise ConversionFailure(
+            detail or "The conversion tool could not process this file."
+        ) from exc

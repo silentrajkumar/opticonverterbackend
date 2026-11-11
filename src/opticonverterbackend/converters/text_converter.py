@@ -16,6 +16,6 @@ def text_pdf(source, output):
                 canvas.showPage()
                 canvas.setFont("Helvetica", 10)
                 y = height - 48
-            canvas.drawString(48, y, line[offset:offset + 110])
+            canvas.drawString(48, y, line[offset : offset + 110])
             y -= 14
     canvas.save()

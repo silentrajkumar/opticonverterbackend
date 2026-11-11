@@ -1,7 +1,14 @@
 .git
 .github
+.env*
 node_modules
 __pycache__
+*.egg-info
+build
+dist
+tests
+.pytest_cache
+.ruff_cache
 *.pyc
 npm-debug.log
 *.log

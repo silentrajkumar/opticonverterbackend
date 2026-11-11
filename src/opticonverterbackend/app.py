@@ -10,7 +10,7 @@ from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PdfReadError
 from reportlab.pdfgen.canvas import Canvas
 
-from converters import (
+from .converters import (
     ARCHIVE_INPUTS,
     ARCHIVE_OUTPUTS,
     AUDIO_INPUTS,
@@ -25,10 +25,16 @@ from converters import (
     convert_file,
     output_extension,
 )
-from converters.image_converter import image_convert
-from converters.office_converter import document_to_pdf
-from converters.ocr_converter import image_ocr as extract_image_text
-from converters.pdf_converter import pdf_compress, pdf_merge, pdf_pages, pdf_split, pdf_to_editable_docx
+from .converters.image_converter import image_convert
+from .converters.office_converter import document_to_pdf
+from .converters.ocr_converter import image_ocr as extract_image_text
+from .converters.pdf_converter import (
+    pdf_compress,
+    pdf_merge,
+    pdf_pages,
+    pdf_split,
+    pdf_to_editable_docx,
+)
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
@@ -93,9 +99,7 @@ def normalize_to_pdf(uploaded, directory, index):
     suffix = Path(filename).suffix.lower()
     supported = {".pdf", ".docx", ".png", ".jpg", ".jpeg", ".txt", ".md"}
     if suffix not in supported:
-        raise ValueError(
-            "Supported input files are PDF, DOCX, PNG, JPG, TXT, and Markdown."
-        )
+        raise ValueError("Supported input files are PDF, DOCX, PNG, JPG, TXT, and Markdown.")
     source = Path(directory) / f"input-{index}{suffix}"
     uploaded.save(source)
     if source.stat().st_size == 0:
@@ -127,9 +131,11 @@ def batch_output(source, output, target):
 def send_result(directory, output, download_name):
     checked_output(output)
     response = send_file(output, as_attachment=True, download_name=download_name)
+
     @response.call_on_close
     def cleanup():
         shutil.rmtree(directory, ignore_errors=True)
+
     return response
 
 
@@ -141,38 +147,78 @@ def health():
 @app.get("/formats")
 def formats():
     document_inputs = sorted(OFFICE_INPUTS | {".txt"})
-    ai_inputs = sorted({".pdf", ".txt"} | IMAGE_INPUTS | OFFICE_INPUTS | VIDEO_INPUTS | AUDIO_INPUTS | ARCHIVE_INPUTS)
-    ai_outputs = sorted(IMAGE_OUTPUTS | OFFICE_OUTPUTS | VIDEO_OUTPUTS | AUDIO_OUTPUTS | ARCHIVE_OUTPUTS | {".pdf", ".gif", ".docx"})
-    return jsonify({
-        "max_upload_bytes": MAX_UPLOAD_BYTES,
-        "native_tools": {
-            "ffmpeg": bool(shutil.which("ffmpeg")),
-            "ghostscript": bool(shutil.which("gs")),
-            "gs": bool(shutil.which("gs")),
-            "libreoffice": bool(shutil.which("libreoffice")),
-            "pdftoppm": bool(shutil.which("pdftoppm")),
-            "poppler": bool(shutil.which("pdftoppm")),
-            "tesseract": bool(shutil.which("tesseract")),
-            "tesseract.js": False,
-        },
-        "ocr_engine": "tesseract",
-        "ocr_endpoint_configured": bool(shutil.which("tesseract")),
-        "conversions": {
-            "images": {"input": sorted(IMAGE_INPUTS), "output": sorted(IMAGE_OUTPUTS | {".pdf"}), "processing": "Python Pillow and pillow-heif"},
-            "pdf": {"input": [".pdf"], "output": [".jpg", ".jpeg", ".png", ".pdf", ".docx"], "processing": "Poppler, Ghostscript, PyMuPDF, and Tesseract"},
-            "documents": {"input": document_inputs, "output": sorted(OFFICE_OUTPUTS), "processing": "LibreOffice"},
-            "video": {"input": sorted(VIDEO_INPUTS), "output": sorted(VIDEO_OUTPUTS | AUDIO_OUTPUTS | {".gif"}), "processing": "FFmpeg"},
-            "audio": {"input": sorted(AUDIO_INPUTS), "output": sorted(AUDIO_OUTPUTS), "processing": "FFmpeg"},
-            "archives": {"input": sorted(ARCHIVE_INPUTS), "output": sorted(ARCHIVE_OUTPUTS), "processing": "Python zipfile and tarfile"},
-        },
-        "pdf": [".jpg", ".png", ".docx", ".pdf"],
-        "ai": {
-            "endpoint": "/ai-convert",
-            "input": ai_inputs,
-            "output": ai_outputs,
-        },
-        "operations": ["merge", "split", "rotate", "watermark", "metadata"],
-    })
+    ai_inputs = sorted(
+        {".pdf", ".txt", ".md"}
+        | IMAGE_INPUTS
+        | OFFICE_INPUTS
+        | VIDEO_INPUTS
+        | AUDIO_INPUTS
+        | ARCHIVE_INPUTS
+    )
+    ai_outputs = sorted(
+        IMAGE_OUTPUTS
+        | OFFICE_OUTPUTS
+        | VIDEO_OUTPUTS
+        | AUDIO_OUTPUTS
+        | ARCHIVE_OUTPUTS
+        | {".pdf", ".gif", ".docx"}
+    )
+    return jsonify(
+        {
+            "max_upload_bytes": MAX_UPLOAD_BYTES,
+            "native_tools": {
+                "ffmpeg": bool(shutil.which("ffmpeg")),
+                "ghostscript": bool(shutil.which("gs")),
+                "gs": bool(shutil.which("gs")),
+                "libreoffice": bool(shutil.which("libreoffice")),
+                "pdftoppm": bool(shutil.which("pdftoppm")),
+                "poppler": bool(shutil.which("pdftoppm")),
+                "tesseract": bool(shutil.which("tesseract")),
+                "tesseract.js": False,
+            },
+            "ocr_engine": "tesseract",
+            "ocr_endpoint_configured": bool(shutil.which("tesseract")),
+            "conversions": {
+                "images": {
+                    "input": sorted(IMAGE_INPUTS),
+                    "output": sorted(IMAGE_OUTPUTS | {".pdf"}),
+                    "processing": "Python Pillow and pillow-heif",
+                },
+                "pdf": {
+                    "input": [".pdf"],
+                    "output": [".jpg", ".jpeg", ".png", ".pdf", ".docx"],
+                    "processing": "Poppler, Ghostscript, PyMuPDF, and Tesseract",
+                },
+                "documents": {
+                    "input": document_inputs,
+                    "output": sorted(OFFICE_OUTPUTS),
+                    "processing": "LibreOffice",
+                },
+                "video": {
+                    "input": sorted(VIDEO_INPUTS),
+                    "output": sorted(VIDEO_OUTPUTS | AUDIO_OUTPUTS | {".gif"}),
+                    "processing": "FFmpeg",
+                },
+                "audio": {
+                    "input": sorted(AUDIO_INPUTS),
+                    "output": sorted(AUDIO_OUTPUTS),
+                    "processing": "FFmpeg",
+                },
+                "archives": {
+                    "input": sorted(ARCHIVE_INPUTS),
+                    "output": sorted(ARCHIVE_OUTPUTS),
+                    "processing": "Python zipfile and tarfile",
+                },
+            },
+            "pdf": [".jpg", ".png", ".docx", ".pdf"],
+            "ai": {
+                "endpoint": "/ai-convert",
+                "input": ai_inputs,
+                "output": ai_outputs,
+            },
+            "operations": ["merge", "split", "rotate", "watermark", "metadata"],
+        }
+    )
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -211,7 +257,9 @@ def ai_mode_convert():
             raise ValueError("The uploaded file is empty.")
         output_ext = output_extension(input_ext, target)
         stem = input_name[:-7] if lower_name.endswith(".tar.gz") else Path(input_name).stem
-        prefix = f"{stem}-compressed" if compress or (input_ext == ".pdf" and target == ".pdf") else stem
+        prefix = (
+            f"{stem}-compressed" if compress or (input_ext == ".pdf" and target == ".pdf") else stem
+        )
         output = Path(directory) / f"{safe_stem(prefix, 'converted')}{output_ext}"
         convert_file(source, output, input_name, target, int(quality), compression, compress)
         checked_output(output)
@@ -251,8 +299,11 @@ def image_ocr():
 def ai_convert():
     directory = tempfile.mkdtemp(prefix="opticonverter-ai-")
     try:
-        files = [uploaded for uploaded in request.files.getlist("files")
-                 if uploaded and uploaded.filename]
+        files = [
+            uploaded
+            for uploaded in request.files.getlist("files")
+            if uploaded and uploaded.filename
+        ]
         if not files:
             raise ValueError("Upload one or more documents in the files field.")
         if len(files) > MAX_BATCH_FILES:
@@ -285,8 +336,11 @@ def ai_convert():
 def merge():
     directory = tempfile.mkdtemp(prefix="opticonverter-")
     try:
-        files = [uploaded for uploaded in request.files.getlist("files")
-                 if uploaded and uploaded.filename]
+        files = [
+            uploaded
+            for uploaded in request.files.getlist("files")
+            if uploaded and uploaded.filename
+        ]
         if len(files) < 2:
             raise ValueError("Upload at least two PDF files in the files field.")
         sources = []

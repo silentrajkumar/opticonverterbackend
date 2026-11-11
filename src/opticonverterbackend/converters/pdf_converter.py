@@ -44,7 +44,7 @@ def pdf_split(source, output, start, end):
     if start < 1 or end < start or end > len(reader.pages):
         raise ConversionFailure("The page range is invalid.")
     writer = PdfWriter()
-    for page in reader.pages[start - 1:end]:
+    for page in reader.pages[start - 1 : end]:
         writer.add_page(page)
     with Path(output).open("wb") as stream:
         writer.write(stream)
@@ -56,7 +56,9 @@ def pdf_pages(source, output, target, output_stem=None):
     args = [tool("pdftoppm"), "-r", "150", "-jpeg" if extension == "jpg" else "-png"]
     args.extend([str(source), str(prefix)])
     run(args)
-    pages = sorted(output.parent.glob(f"page-*.{extension}"), key=lambda path: int(path.stem.split("-")[-1]))
+    pages = sorted(
+        output.parent.glob(f"page-*.{extension}"), key=lambda path: int(path.stem.split("-")[-1])
+    )
     if not pages:
         raise ConversionFailure("No pages were rendered from this PDF.")
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -66,16 +68,28 @@ def pdf_pages(source, output, target, output_stem=None):
 
 def pdf_compress(source, output):
     compressed = output.with_name("compressed.pdf")
-    run([tool("gs"), "-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4",
-         "-dPDFSETTINGS=/ebook", "-dNOPAUSE", "-dQUIET", "-dBATCH",
-         f"-sOutputFile={compressed}", str(source)])
-    shutil.copyfile(compressed if compressed.stat().st_size < source.stat().st_size else source, output)
+    run(
+        [
+            tool("gs"),
+            "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            "-dPDFSETTINGS=/ebook",
+            "-dNOPAUSE",
+            "-dQUIET",
+            "-dBATCH",
+            f"-sOutputFile={compressed}",
+            str(source),
+        ]
+    )
+    shutil.copyfile(
+        compressed if compressed.stat().st_size < source.stat().st_size else source, output
+    )
 
 
 def pdf_to_editable_docx(source, output, directory):
     import fitz
 
-    from convert_pdf_to_docx import convert, ocr_tsv_to_text
+    from ..convert_pdf_to_docx import convert, ocr_tsv_to_text
 
     pdf = fitz.open(source)
     ocr_pages = [""] * pdf.page_count
@@ -85,8 +99,20 @@ def pdf_to_editable_docx(source, output, directory):
             if page.get_text().strip():
                 continue
             prefix = Path(directory) / f"ocr-page-{index + 1}"
-            run([tool("pdftoppm"), "-f", str(index + 1), "-l", str(index + 1),
-                 "-r", "180", "-png", str(source), str(prefix)])
+            run(
+                [
+                    tool("pdftoppm"),
+                    "-f",
+                    str(index + 1),
+                    "-l",
+                    str(index + 1),
+                    "-r",
+                    "180",
+                    "-png",
+                    str(source),
+                    str(prefix),
+                ]
+            )
             rendered = next(Path(directory).glob(f"ocr-page-{index + 1}-*.png"), None)
             if rendered:
                 result = run([tool("tesseract"), str(rendered), "stdout", "tsv"])

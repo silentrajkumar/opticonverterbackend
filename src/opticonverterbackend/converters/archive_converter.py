@@ -15,7 +15,11 @@ MAX_EXPANDED_ARCHIVE_BYTES = 100 * 1024 * 1024
 
 def safe_member(name):
     path = PurePosixPath(name)
-    return not path.is_absolute() and all(part not in {"..", "."} for part in path.parts) and "\\" not in name
+    return (
+        not path.is_absolute()
+        and all(part not in {"..", "."} for part in path.parts)
+        and "\\" not in name
+    )
 
 
 def archive_convert(source, output, target):

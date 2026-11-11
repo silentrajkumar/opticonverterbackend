@@ -109,7 +109,10 @@ def _add_table(document, page, table, printable_width):
         for line in block.get("lines", []):
             for span in line["spans"]:
                 x0, y0, x1, y1 = span["bbox"]
-                if any(abs(y0 - title_y) < 0.1 and span["text"] == title_span["text"] for title_y, title_span in centered_titles):
+                if any(
+                    abs(y0 - title_y) < 0.1 and span["text"] == title_span["text"]
+                    for title_y, title_span in centered_titles
+                ):
                     continue
                 center_x, center_y = (x0 + x1) / 2, (y0 + y1) / 2
                 if not bounds.contains(fitz.Point(center_x, center_y)):
@@ -121,24 +124,30 @@ def _add_table(document, page, table, printable_width):
     for row_index, row in enumerate(cell_items):
         row_items = [item for items in row for item in items]
         if len(row_items) == 1 and row_items[0][4] < source_width * 0.8:
-            merged = word_table.cell(row_index, 0).merge(word_table.cell(row_index, column_count - 1))
+            merged = word_table.cell(row_index, 0).merge(
+                word_table.cell(row_index, column_count - 1)
+            )
             _set_cell_text(merged, row_items)
             continue
         for column_index, items in enumerate(row):
             _set_cell_text(word_table.cell(row_index, column_index), items)
 
 
-def _add_line(document, line):
+def _add_line(document, line, previous_bottom):
     spans = sorted(line["spans"], key=lambda span: span["bbox"][0])
     if not spans:
-        return
+        return previous_bottom
     text = " ".join(span["text"].strip() for span in spans if span["text"].strip())
     if not text:
-        return
+        return previous_bottom
     paragraph = document.add_paragraph()
-    paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.space_after = Pt(1)
-    paragraph.paragraph_format.line_spacing = 1
+    top, left, bottom = line["bbox"][1], line["bbox"][0], line["bbox"][3]
+    paragraph.paragraph_format.left_indent = Pt(max(0, left))
+    paragraph.paragraph_format.space_before = Pt(max(0, top - previous_bottom))
+    paragraph.paragraph_format.space_after = Pt(0)
+    span_size = max((span["size"] for span in spans), default=7)
+    line_height = max(6, min(24, bottom - top, span_size * 1.3))
+    paragraph.paragraph_format.line_spacing = Pt(line_height)
     if line["bbox"][1] < 80 and len(text) < 120:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for span in spans:
@@ -149,18 +158,24 @@ def _add_line(document, line):
         run.font.name = "Arial"
         run.font.size = Pt(max(6, min(14, span["size"] * 0.82)))
         run.bold = bool(span["flags"] & 16)
+    return top + line_height
 
 
 def _line_is_in_table(line, table_bounds):
     line_bounds = fitz.Rect(line["bbox"])
     if line_bounds.is_empty:
         return False
-    center = fitz.Point((line_bounds.x0 + line_bounds.x1) / 2, (line_bounds.y0 + line_bounds.y1) / 2)
+    center = fitz.Point(
+        (line_bounds.x0 + line_bounds.x1) / 2, (line_bounds.y0 + line_bounds.y1) / 2
+    )
     for bounds in table_bounds:
         if bounds.contains(center):
             return True
         intersection = line_bounds & bounds
-        if not intersection.is_empty and intersection.get_area() / max(1, line_bounds.get_area()) > 0.5:
+        if (
+            not intersection.is_empty
+            and intersection.get_area() / max(1, line_bounds.get_area()) > 0.5
+        ):
             return True
     return False
 
@@ -193,47 +208,63 @@ def _parse_ocr_tsv(tsv):
         if not text or confidence < 0:
             continue
         key = (row.get("block_num"), row.get("par_num"), row.get("line_num"))
-        grouped.setdefault(key, []).append({
-            "text": text,
-            "left": int(row.get("left", 0) or 0),
-            "top": int(row.get("top", 0) or 0),
-            "width": int(row.get("width", 0) or 0),
-            "height": int(row.get("height", 0) or 0),
-        })
+        grouped.setdefault(key, []).append(
+            {
+                "text": text,
+                "left": int(row.get("left", 0) or 0),
+                "top": int(row.get("top", 0) or 0),
+                "width": int(row.get("width", 0) or 0),
+                "height": int(row.get("height", 0) or 0),
+            }
+        )
 
     lines = []
     for words in grouped.values():
         words.sort(key=lambda word: word["left"])
-        lines.append({
-            "words": words,
-            "left": min(word["left"] for word in words),
-            "top": min(word["top"] for word in words),
-            "height": max(word["height"] for word in words),
-        })
+        lines.append(
+            {
+                "words": words,
+                "left": min(word["left"] for word in words),
+                "top": min(word["top"] for word in words),
+                "height": max(word["height"] for word in words),
+            }
+        )
 
     # Tesseract may split aligned text columns into separate blocks. Combine
     # lines on the same visual row so tab stops keep their columns editable.
     rows = []
     for line in sorted(lines, key=lambda item: (item["top"], item["left"])):
         center = line["top"] + line["height"] / 2
-        match = next((row for row in reversed(rows)
-                      if abs(center - row["center"]) <= max(7, min(line["height"], row["height"]) * 0.55)), None)
+        match = next(
+            (
+                row
+                for row in reversed(rows)
+                if abs(center - row["center"]) <= max(7, min(line["height"], row["height"]) * 0.55)
+            ),
+            None,
+        )
         if match:
             match["lines"].append(line)
-            match["center"] = sum(item["top"] + item["height"] / 2 for item in match["lines"]) / len(match["lines"])
+            match["center"] = sum(
+                item["top"] + item["height"] / 2 for item in match["lines"]
+            ) / len(match["lines"])
             match["height"] = max(match["height"], line["height"])
         else:
             rows.append({"center": center, "height": line["height"], "lines": [line]})
 
     merged = []
     for row in rows:
-        words = sorted((word for line in row["lines"] for word in line["words"]), key=lambda word: word["left"])
-        merged.append({
-            "words": words,
-            "left": min(word["left"] for word in words),
-            "top": min(word["top"] for word in words),
-            "height": max(word["height"] for word in words),
-        })
+        words = sorted(
+            (word for line in row["lines"] for word in line["words"]), key=lambda word: word["left"]
+        )
+        merged.append(
+            {
+                "words": words,
+                "left": min(word["left"] for word in words),
+                "top": min(word["top"] for word in words),
+                "height": max(word["height"] for word in words),
+            }
+        )
     return page_width, page_height, merged
 
 
@@ -271,13 +302,17 @@ def _append_positioned_ocr_page(document, tsv, section):
         for word in words:
             word_position = word["left"] * scale_x
             if previous_end is None:
-                paragraph.paragraph_format.tab_stops.add_tab_stop(Pt(min(printable_width, max(1, word_position))), WD_TAB_ALIGNMENT.LEFT)
+                paragraph.paragraph_format.tab_stops.add_tab_stop(
+                    Pt(min(printable_width, max(1, word_position))), WD_TAB_ALIGNMENT.LEFT
+                )
                 paragraph.add_run("\t")
             else:
                 gap = word["left"] - previous_end
                 if gap * scale_x > max(18, font_size * 2.5):
                     tab_position = min(printable_width, max(1, word_position))
-                    paragraph.paragraph_format.tab_stops.add_tab_stop(Pt(tab_position), WD_TAB_ALIGNMENT.LEFT)
+                    paragraph.paragraph_format.tab_stops.add_tab_stop(
+                        Pt(tab_position), WD_TAB_ALIGNMENT.LEFT
+                    )
                     paragraph.add_run("\t")
                 else:
                     paragraph.add_run(" ")
@@ -299,11 +334,10 @@ def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
     section = document.sections[0]
     section.page_width = Pt(pdf[0].rect.width)
     section.page_height = Pt(pdf[0].rect.height)
-    scanned_only = bool(ocr_layout_path) and all(not page.get_text().strip() for page in pdf)
-    section.top_margin = Pt(0 if scanned_only else 24)
-    section.bottom_margin = Pt(0 if scanned_only else 24)
-    section.left_margin = Pt(0 if scanned_only else 26)
-    section.right_margin = Pt(0 if scanned_only else 26)
+    section.top_margin = Pt(0)
+    section.bottom_margin = Pt(0)
+    section.left_margin = Pt(0)
+    section.right_margin = Pt(0)
     printable_width = section.page_width - section.left_margin - section.right_margin
 
     normal = document.styles["Normal"]
@@ -314,7 +348,9 @@ def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
     normal.paragraph_format.line_spacing = 1
 
     ocr_pages = Path(ocr_text_path).read_text(encoding="utf-8").split("\f") if ocr_text_path else []
-    ocr_layout_pages = json.loads(Path(ocr_layout_path).read_text(encoding="utf-8")) if ocr_layout_path else []
+    ocr_layout_pages = (
+        json.loads(Path(ocr_layout_path).read_text(encoding="utf-8")) if ocr_layout_path else []
+    )
     for page_index, page in enumerate(pdf):
         try:
             tables = page.find_tables().tables
@@ -335,11 +371,17 @@ def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
             _append_ocr_page(document, ocr_pages[page_index], page_index + 1)
         else:
             elements.sort(key=lambda item: (round(item[0] / 3) * 3, item[1]))
+            cursor_bottom = 0
             for _top, _left, kind, item in elements:
                 if kind == "table":
+                    spacer = document.add_paragraph()
+                    spacer.paragraph_format.space_before = Pt(max(0, item.bbox[1] - cursor_bottom))
+                    spacer.paragraph_format.space_after = Pt(0)
+                    spacer.paragraph_format.line_spacing = Pt(1)
                     _add_table(document, page, item, printable_width)
+                    cursor_bottom = max(cursor_bottom, item.bbox[3])
                 else:
-                    _add_line(document, item)
+                    cursor_bottom = max(cursor_bottom, _add_line(document, item, cursor_bottom))
             if page_index < len(ocr_pages) and ocr_pages[page_index].strip():
                 _append_ocr_page(document, ocr_pages[page_index], page_index + 1)
 
