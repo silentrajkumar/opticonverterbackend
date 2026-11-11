@@ -73,13 +73,28 @@ Uploads are limited to 50 MB, generated files to 100 MB, and conversions to two 
 ## Docker
 
 The API listens on port `8000` by default. Start locally with `python app.py`, or use
-the included Docker Compose configuration.
+the included Docker Compose configuration. CORS is selected by the environment file:
+local mode allows `http://localhost:5173`, while production mode allows
+`https://opticonverter.com` and `https://www.opticonverter.com`.
 
-For a persistent service:
+For local development, create `.env.local` from `.env.example` and run:
 
 ```sh
-docker compose up -d --build
+docker compose --env-file .env.local up -d --build
 curl http://127.0.0.1:8000/health
 ```
 
-Put the API behind HTTPS and a reverse proxy before exposing it publicly. Configure rate limiting and an exact `FRONTEND_ORIGIN` for production use.
+For production, create `.env.production` from `.env.production.example` and run:
+
+```sh
+docker compose --env-file .env.production up -d --build
+```
+
+The frontend's deployment workflow sets `SITE_URL` to `https://opticonverter.com`;
+the GitHub repository URL is not a browser origin. Set the frontend repository's
+`CONVERTER_API_URL` Actions variable to the public HTTPS URL of this API. You can
+override `FRONTEND_ORIGIN` in either environment file with a comma-separated list
+of exact browser origins.
+
+Put the API behind HTTPS and a reverse proxy before exposing it publicly, and
+configure rate limiting for production use.
