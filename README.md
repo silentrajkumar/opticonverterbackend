@@ -143,6 +143,40 @@ For production, create `.env.production` from `.env.production.example` and run:
 docker compose --env-file .env.production up -d --build
 ```
 
+### Automatic OCI deployment
+
+Every push to `main` triggers `.github/workflows/deploy-oci.yml`. The workflow
+runs the test suite and Ruff checks first. If they pass, it connects to the OCI
+instance over SSH, updates `/opt/opticonverter` to the latest `main` commit,
+rebuilds and restarts the Compose service, then checks
+`http://127.0.0.1:8000/health`. Deployments are serialized so concurrent pushes
+cannot update the production checkout at the same time.
+
+Configure these values in the GitHub repository under **Settings → Secrets and
+variables → Actions** before pushing to `main`:
+
+Repository variables:
+
+- `OCI_HOST`: the instance's public IP or SSH hostname (currently
+  `129.225.109.39`).
+- `OCI_USER`: the SSH login user (currently `ubuntu`).
+
+Repository secrets:
+
+- `OCI_SSH_PRIVATE_KEY`: the private key for the `ubuntu` account. Never commit
+  this key or put it in a repository variable.
+- `OCI_KNOWN_HOSTS`: the SSH host-key entry for the instance, created with
+  `ssh-keyscan -H 129.225.109.39`. Verify its fingerprint against the instance
+  before saving it; the currently observed ED25519 fingerprint is
+  `SHA256:rXkLOEq79nBZ2ErtZmeGjaDq5PlxdFNvqWWHWlEx9vw`.
+
+The VM must allow this SSH key to run `sudo -n` without an interactive password.
+The deployment directory and production environment file must already exist at
+`/opt/opticonverter` and `/opt/opticonverter/.env.production`. The workflow
+leaves `.env.production` untouched and keeps the API bound to `127.0.0.1:8000`;
+Nginx/HTTPS and OCI ingress must be configured separately before the public API
+can be reached. Do not open port 8000 to the internet.
+
 The frontend's deployment workflow sets `SITE_URL` to `https://opticonverter.com`;
 the GitHub repository URL is not a browser origin. Set the frontend repository's
 `CONVERTER_API_URL` Actions variable to the public HTTPS URL of this API. You can

@@ -6,4 +6,4 @@ services:
       PORT: 8000
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
