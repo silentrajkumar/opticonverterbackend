@@ -152,16 +152,14 @@ rebuilds and restarts the Compose service, then checks
 `http://127.0.0.1:8000/health`. Deployments are serialized so concurrent pushes
 cannot update the production checkout at the same time.
 
-Configure these values in the GitHub repository under **Settings → Secrets and
-variables → Actions** before pushing to `main`:
+The workflow defaults to the current instance at `129.225.109.39` with SSH user
+`ubuntu`. To override these defaults, add repository variables under
+**Settings → Secrets and variables → Actions**:
 
-Repository variables:
+- `OCI_HOST`: the instance's public IP or SSH hostname.
+- `OCI_USER`: the SSH login user.
 
-- `OCI_HOST`: the instance's public IP or SSH hostname (currently
-  `129.225.109.39`).
-- `OCI_USER`: the SSH login user (currently `ubuntu`).
-
-Repository secrets:
+Add these repository secrets in the same settings page:
 
 - `OCI_SSH_PRIVATE_KEY`: the private key for the `ubuntu` account. Never commit
   this key or put it in a repository variable.

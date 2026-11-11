@@ -40,8 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      OCI_HOST: ${{ vars.OCI_HOST }}
-      OCI_USER: ${{ vars.OCI_USER }}
+      OCI_HOST: ${{ vars.OCI_HOST || '129.225.109.39' }}
+      OCI_USER: ${{ vars.OCI_USER || 'ubuntu' }}
       OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
       OCI_KNOWN_HOSTS: ${{ secrets.OCI_KNOWN_HOSTS }}
     steps:
