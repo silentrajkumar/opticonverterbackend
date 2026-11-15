@@ -72,11 +72,14 @@ def test_formats_endpoint_describes_supported_operations():
     assert formats["operations"] == ["merge", "split", "rotate", "watermark", "metadata"]
     assert formats["conversions"]["documents"]["pairs"] == {
         ".docx": [".pdf"],
+        ".md": [".pdf"],
         ".pptx": [".pdf"],
+        ".txt": [".pdf"],
         ".xlsx": [".csv", ".pdf", ".xls"],
         ".xls": [".csv", ".pdf", ".xlsx"],
         ".csv": [".pdf", ".xls", ".xlsx"],
     }
+    assert ".md" in formats["conversions"]["documents"]["input"]
 
 
 def test_document_router_rejects_unavailable_format_pairs(tmp_path):
@@ -92,9 +95,23 @@ def test_document_router_rejects_unavailable_format_pairs(tmp_path):
         ("source.pptx", ".xls"),
         ("source.txt", ".xlsx"),
         ("source.txt", ".csv"),
+        ("source.md", ".xlsx"),
     ]:
         with pytest.raises(ConversionFailure):
             convert_file(source, tmp_path / f"output{target}", source_name, target)
+
+
+def test_markdown_router_writes_pdf(tmp_path):
+    from opticonverterbackend.converters.router import convert_file
+
+    source = tmp_path / "source.md"
+    output = tmp_path / "output.pdf"
+    source.write_text("# Markdown heading\n\nA paragraph.", encoding="utf-8")
+
+    convert_file(source, output, source.name, ".pdf")
+
+    assert output.is_file()
+    assert output.read_bytes().startswith(b"%PDF")
 
 
 def test_cors_allows_configured_origin(monkeypatch):

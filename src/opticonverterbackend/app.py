@@ -207,7 +207,7 @@ def health():
 
 @app.get("/formats")
 def formats():
-    document_inputs = sorted(OFFICE_INPUTS | {".txt"})
+    document_inputs = sorted(OFFICE_INPUTS | {".md", ".txt"})
     ai_inputs = sorted(
         {".pdf", ".txt", ".md"}
         | IMAGE_INPUTS
@@ -255,8 +255,9 @@ def formats():
                     "output": sorted(OFFICE_OUTPUTS),
                     "pairs": {
                         source: sorted(targets) for source, targets in OFFICE_CONVERSIONS.items()
-                    },
-                    "processing": "LibreOffice",
+                    }
+                    | {".md": [".pdf"], ".txt": [".pdf"]},
+                    "processing": "LibreOffice and the text renderer",
                 },
                 "video": {
                     "input": sorted(VIDEO_INPUTS),
