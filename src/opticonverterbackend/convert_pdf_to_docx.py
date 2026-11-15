@@ -371,7 +371,8 @@ def _append_positioned_ocr_page(document, tsv, section):
     return True
 
 
-def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
+def _convert_positioned(source, destination, ocr_text_path=None, ocr_layout_path=None):
+    """Fallback converter for scanned PDFs and documents with OCR text."""
     pdf = fitz.open(source)
     if not pdf.page_count:
         raise ValueError("The PDF contains no pages.")
@@ -440,6 +441,33 @@ def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
 
     pdf.close()
     document.save(destination)
+
+
+def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
+    """Convert a PDF into an editable DOCX while retaining its page layout.
+
+    ``pdf2docx`` recognises borders, merged cells, images, and positioned text
+    together. This produces substantially more faithful Word documents for
+    statements and forms than rebuilding each detected PDF text line ourselves.
+    OCR input still uses the positioned fallback because it has no PDF text or
+    drawing data for the layout engine to analyse.
+    """
+    if ocr_text_path or ocr_layout_path:
+        _convert_positioned(source, destination, ocr_text_path, ocr_layout_path)
+        return
+
+    try:
+        from pdf2docx import Converter
+
+        converter = Converter(str(source))
+        try:
+            converter.convert(str(destination), start=0, end=None)
+        finally:
+            converter.close()
+    except Exception:
+        # Keep an editable result available for PDFs that the layout engine
+        # cannot parse, including uncommon or damaged PDF structures.
+        _convert_positioned(source, destination, ocr_text_path, ocr_layout_path)
 
 
 if __name__ == "__main__":
