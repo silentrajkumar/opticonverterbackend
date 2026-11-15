@@ -15,6 +15,11 @@ AUDIO_CODECS = {
 }
 
 
+def _vorbis_quality(compression):
+    reduction = 30 if compression is None else compression
+    return max(0, min(5, round(5 - reduction / 30)))
+
+
 def audio_convert(source, output, source_ext, target, compression=None):
     if target not in AUDIO_OUTPUTS:
         raise ConversionFailure(f"Conversion from {source_ext} to {target} is not supported.")
@@ -30,7 +35,9 @@ def audio_convert(source, output, source_ext, target, compression=None):
         "-c:a",
         AUDIO_CODECS[target],
     ]
-    if target != ".wav":
+    if target == ".ogg":
+        args.extend(["-q:a", str(_vorbis_quality(compression))])
+    elif target != ".wav":
         bitrate = max(64, round(320 - compression * 2.56)) if compression is not None else 192
         args.extend(["-b:a", f"{bitrate}k"])
     args.append(str(output))

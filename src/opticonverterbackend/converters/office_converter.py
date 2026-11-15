@@ -11,6 +11,13 @@ from .text_converter import text_pdf
 
 OFFICE_INPUTS = {".docx", ".pptx", ".xlsx", ".xls", ".csv"}
 OFFICE_OUTPUTS = {".pdf", ".csv", ".xlsx", ".xls"}
+OFFICE_CONVERSIONS = {
+    ".docx": {".pdf"},
+    ".pptx": {".pdf"},
+    ".xlsx": {".pdf", ".csv", ".xls"},
+    ".xls": {".pdf", ".csv", ".xlsx"},
+    ".csv": {".pdf", ".xlsx", ".xls"},
+}
 
 
 def _word_convert(source, output, target):

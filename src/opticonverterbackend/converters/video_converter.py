@@ -1,6 +1,6 @@
 """Video format conversion, audio extraction, and GIF generation."""
 
-from .audio_converter import AUDIO_OUTPUTS
+from .audio_converter import AUDIO_OUTPUTS, _vorbis_quality
 from .common import ConversionFailure, run, tool
 
 
@@ -22,7 +22,9 @@ def video_convert(source, output, source_ext, target, compression=None, quality=
             ".ogg": "libvorbis",
         }
         args.extend(["-vn", "-c:a", codecs[target]])
-        if target != ".wav":
+        if target == ".ogg":
+            args.extend(["-q:a", str(_vorbis_quality(compression))])
+        elif target != ".wav":
             bitrate = max(64, round(320 - compression * 2.56)) if compression is not None else 192
             args.extend(["-b:a", f"{bitrate}k"])
     elif target == ".gif":

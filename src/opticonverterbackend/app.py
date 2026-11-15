@@ -23,6 +23,7 @@ from .converters import (
     AUDIO_OUTPUTS,
     IMAGE_INPUTS,
     IMAGE_OUTPUTS,
+    OFFICE_CONVERSIONS,
     OFFICE_INPUTS,
     OFFICE_OUTPUTS,
     VIDEO_INPUTS,
@@ -252,6 +253,9 @@ def formats():
                 "documents": {
                     "input": document_inputs,
                     "output": sorted(OFFICE_OUTPUTS),
+                    "pairs": {
+                        source: sorted(targets) for source, targets in OFFICE_CONVERSIONS.items()
+                    },
                     "processing": "LibreOffice",
                 },
                 "video": {

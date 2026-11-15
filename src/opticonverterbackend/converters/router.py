@@ -7,7 +7,7 @@ from .archive_converter import ARCHIVE_INPUTS, ARCHIVE_OUTPUTS, archive_convert,
 from .audio_converter import AUDIO_INPUTS, AUDIO_OUTPUTS, audio_convert
 from .common import ConversionFailure
 from .image_converter import IMAGE_INPUTS, IMAGE_OUTPUTS, image_convert
-from .office_converter import OFFICE_INPUTS, OFFICE_OUTPUTS, office_convert
+from .office_converter import OFFICE_CONVERSIONS, OFFICE_INPUTS, office_convert
 from .pdf_converter import pdf_compress, pdf_pages, pdf_to_editable_docx
 from .text_converter import text_pdf
 from .video_converter import VIDEO_INPUTS, VIDEO_OUTPUTS, video_convert
@@ -28,7 +28,7 @@ def convert_file(source, output, input_name, target, quality=85, compression=Non
             raise ConversionFailure(f"Conversion from {source_ext} to {target} is not supported.")
         image_convert(source, output, target, quality)
     elif source_ext in OFFICE_INPUTS:
-        if target not in OFFICE_OUTPUTS:
+        if target not in OFFICE_CONVERSIONS[source_ext]:
             raise ConversionFailure(f"Conversion from {source_ext} to {target} is not supported.")
         office_convert(source, output, target, output.parent)
     elif source_ext in {".txt", ".md"} and target == ".pdf":
