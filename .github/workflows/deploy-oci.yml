@@ -43,6 +43,7 @@ jobs:
       OCI_HOST: ${{ vars.OCI_HOST || '129.225.109.39' }}
       OCI_USER: ${{ vars.OCI_USER || 'ubuntu' }}
       OCI_SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
     steps:
       - name: Deploy latest main revision
         shell: bash
@@ -70,14 +71,11 @@ jobs:
           fi
           ssh-keygen -F "$OCI_HOST" -f "$known_hosts_file" >/dev/null
 
-          ssh \
-            -i "$key_file" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$known_hosts_file" \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=20 \
-            "$OCI_USER@$OCI_HOST" 'sudo -n bash -s' <<'REMOTE'
+          smtp_password_b64="$(printf '%s' "$SMTP_PASSWORD" | base64 -w 0)"
+
+          {
+          printf 'SMTP_PASSWORD_B64=%q\n' "$smtp_password_b64"
+          cat <<'REMOTE'
           set -Eeuo pipefail
 
           app_dir=/opt/opticonverter
@@ -91,6 +89,23 @@ jobs:
             exit 1
           fi
           chmod 600 .env.production
+
+          if [[ -n "${SMTP_PASSWORD_B64:-}" ]]; then
+            smtp_password="$(printf '%s' "$SMTP_PASSWORD_B64" | base64 -d)"
+            set_env() {
+              local key="$1"
+              local value="$2"
+              sed -i "/^${key}=/d" .env.production
+              printf '%s=%s\n' "$key" "$value" >> .env.production
+            }
+            set_env SMTP_HOST smtp.gmail.com
+            set_env SMTP_PORT 587
+            set_env SMTP_USERNAME opticonverter@gmail.com
+            set_env SMTP_PASSWORD "$smtp_password"
+            set_env FEEDBACK_FROM_EMAIL opticonverter@gmail.com
+            set_env FEEDBACK_TO_EMAIL opticonverter@gmail.com
+            chmod 600 .env.production
+          fi
 
           docker compose --env-file .env.production config -q
           docker compose --env-file .env.production up -d --build --remove-orphans
@@ -109,3 +124,11 @@ jobs:
           docker compose --env-file .env.production logs --tail=100
           exit 1
           REMOTE
+          } | ssh \
+            -i "$key_file" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known_hosts_file" \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            "$OCI_USER@$OCI_HOST" 'sudo -n bash -s'
