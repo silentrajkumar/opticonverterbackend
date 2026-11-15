@@ -110,6 +110,7 @@ python -m ruff format --check .
 - `POST /convert?format=<extension>` accepts one multipart `file` and supports the same dropdown-selected single-file conversions as AI mode.
 - `POST /ai-convert?format=<extension>` accepts one multipart `file` and converts it to the selected dropdown format. Optional query parameters are `quality`, `compression`, and `compress=any`. It supports image, PDF, Office, text, media, and archive conversion pairs implemented by the service.
 - `POST /api/ocr` accepts one multipart image `file` and returns recognized English text as JSON. Images are limited to 10 MB and 40 megapixels.
+- `POST /api/feedback` accepts a JSON feedback message and emails it to the configured feedback address. It validates message fields and limits each client to five messages per hour.
 - `POST /ai/convert?format=.jpg|.png|.docx|.pdf` accepts up to 20 mixed files in the
   `files` field and returns one ZIP containing the converted result for each file.
   `/convert/batch` is an alias for this endpoint. Supported inputs are PDF, DOCX,
@@ -122,6 +123,10 @@ python -m ruff format --check .
 - `POST /pdf/metadata` accepts `file` and metadata form fields.
 
 Uploads are limited to 50 MB, generated files to 100 MB, and conversions to two minutes. Temporary files are removed after each request. Set `FRONTEND_ORIGIN` to a comma-separated list of exact browser origins for CORS.
+
+### Feedback email delivery
+
+Feedback is sent through Gmail SMTP. Configure `SMTP_USERNAME` and `SMTP_PASSWORD` on the API service; use a Google App Password for the `opticonverter@gmail.com` account. Set `FEEDBACK_FROM_EMAIL` to that account and `FEEDBACK_TO_EMAIL` to `opticonverter@gmail.com`. Never commit the SMTP password. The endpoint returns an error when SMTP is not configured, rather than reporting feedback as sent.
 
 ## Docker
 

@@ -1,8 +1,14 @@
 import os
+import re
+import smtplib
+import ssl
 import shutil
 import tempfile
+import time
 import zipfile
+from email.message import EmailMessage
 from pathlib import Path
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request, send_file
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -41,6 +47,14 @@ MAX_OUTPUT_BYTES = 100 * 1024 * 1024
 MAX_BATCH_FILES = 20
 MAX_OCR_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_OCR_PIXELS = 40_000_000
+MAX_FEEDBACK_LENGTH = 5_000
+FEEDBACK_TOPICS = {
+    "General feedback",
+    "Report a problem",
+    "Suggest a converter",
+    "Accessibility feedback",
+}
+FEEDBACK_RATE_LIMIT = {}
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
@@ -64,6 +78,50 @@ def add_cors_headers(response):
 
 def fail(message, status=400):
     return jsonify(detail=message), status
+
+
+def feedback_rate_limited(client_ip):
+    now = time.time()
+    recent = [sent_at for sent_at in FEEDBACK_RATE_LIMIT.get(client_ip, []) if now - sent_at < 3600]
+    if len(recent) >= 5:
+        FEEDBACK_RATE_LIMIT[client_ip] = recent
+        return True
+    recent.append(now)
+    FEEDBACK_RATE_LIMIT[client_ip] = recent
+    return False
+
+
+def send_feedback_email(topic, name, reply_email, message, page):
+    smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_username = os.environ.get("SMTP_USERNAME", "")
+    smtp_password = os.environ.get("SMTP_PASSWORD", "")
+    sender = os.environ.get("FEEDBACK_FROM_EMAIL", smtp_username)
+    recipient = os.environ.get("FEEDBACK_TO_EMAIL", "opticonverter@gmail.com")
+    if not smtp_username or not smtp_password or not sender:
+        raise RuntimeError("Feedback email delivery is not configured. Email opticonverter@gmail.com directly.")
+
+    email_message = EmailMessage()
+    email_message["Subject"] = f"OptiConverter feedback: {topic}"
+    email_message["From"] = sender
+    email_message["To"] = recipient
+    if reply_email:
+        email_message["Reply-To"] = reply_email
+    email_message.set_content(
+        "OptiConverter feedback received\n\n"
+        f"Topic: {topic}\n"
+        f"Name: {name or 'Not provided'}\n"
+        f"Reply email: {reply_email or 'Not provided'}\n"
+        f"Page: {page or 'Not provided'}\n\n"
+        f"Message:\n{message}\n"
+    )
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
+        smtp.ehlo()
+        smtp.starttls(context=ssl.create_default_context())
+        smtp.ehlo()
+        smtp.login(smtp_username, smtp_password)
+        smtp.send_message(email_message)
 
 
 def checked_upload(field="file"):
@@ -224,6 +282,42 @@ def formats():
 @app.errorhandler(RequestEntityTooLarge)
 def request_too_large(_error):
     return fail("Files must be 50 MB or smaller.", 413)
+
+
+@app.post("/api/feedback")
+def feedback():
+    payload = request.get_json(silent=True) or {}
+    topic = str(payload.get("topic", "")).strip()
+    name = str(payload.get("name", "")).strip()
+    reply_email = str(payload.get("email", "")).strip()
+    message = str(payload.get("message", "")).strip()
+    page = str(payload.get("page", "")).strip()
+
+    if topic not in FEEDBACK_TOPICS:
+        return fail("Choose a valid feedback type.")
+    if not message or len(message) > MAX_FEEDBACK_LENGTH:
+        return fail(f"Feedback must be between 1 and {MAX_FEEDBACK_LENGTH} characters.")
+    if len(name) > 120 or any(ord(character) < 32 for character in name):
+        return fail("Name must be 120 characters or fewer.")
+    if len(reply_email) > 254 or (reply_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reply_email)):
+        return fail("Enter a valid reply email address.")
+    parsed_page = urlparse(page)
+    if len(page) > 2048 or (page and parsed_page.scheme not in {"http", "https"}):
+        return fail("Page URL must be a valid HTTP or HTTPS URL.")
+
+    if not os.environ.get("SMTP_USERNAME") or not os.environ.get("SMTP_PASSWORD"):
+        return fail("Feedback email delivery is not configured. Email opticonverter@gmail.com directly.", 503)
+    if feedback_rate_limited(request.remote_addr or "unknown"):
+        return fail("Too many feedback messages. Please try again later.", 429)
+    try:
+        send_feedback_email(topic, name, reply_email, message, page)
+    except RuntimeError as error:
+        return fail(str(error), 503)
+    except (smtplib.SMTPException, OSError, ValueError):
+        app.logger.exception("Feedback email delivery failed")
+        return fail("We could not deliver your feedback right now. Please email opticonverter@gmail.com directly.", 502)
+
+    return jsonify(message="Feedback sent successfully."), 200
 
 
 @app.post("/convert")

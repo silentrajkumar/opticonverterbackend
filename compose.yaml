@@ -5,5 +5,11 @@ services:
     environment:
       PORT: 8000
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      FEEDBACK_FROM_EMAIL: ${FEEDBACK_FROM_EMAIL:-opticonverter@gmail.com}
+      FEEDBACK_TO_EMAIL: ${FEEDBACK_TO_EMAIL:-opticonverter@gmail.com}
     ports:
       - "127.0.0.1:8000:8000"
