@@ -137,27 +137,43 @@ def _add_line(document, line, previous_bottom):
     spans = sorted(line["spans"], key=lambda span: span["bbox"][0])
     if not spans:
         return previous_bottom
-    text = " ".join(span["text"].strip() for span in spans if span["text"].strip())
-    if not text:
+    if not any(span["text"].strip() for span in spans):
         return previous_bottom
     paragraph = document.add_paragraph()
-    top, left, bottom = line["bbox"][1], line["bbox"][0], line["bbox"][3]
-    paragraph.paragraph_format.left_indent = Pt(max(0, left))
+    top, _left, bottom = line["bbox"][1], line["bbox"][0], line["bbox"][3]
+    paragraph.paragraph_format.left_indent = Pt(0)
     paragraph.paragraph_format.space_before = Pt(max(0, top - previous_bottom))
     paragraph.paragraph_format.space_after = Pt(0)
     span_size = max((span["size"] for span in spans), default=7)
     line_height = max(6, min(24, bottom - top, span_size * 1.3))
     paragraph.paragraph_format.line_spacing = Pt(line_height)
-    if line["bbox"][1] < 80 and len(text) < 120:
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    previous_end = None
     for span in spans:
         value = span["text"].strip()
         if not value:
             continue
-        run = paragraph.add_run(value + " ")
+        span_left = max(0, span["bbox"][0])
+        if previous_end is None:
+            if span_left > 1:
+                paragraph.paragraph_format.tab_stops.add_tab_stop(
+                    Pt(span_left), WD_TAB_ALIGNMENT.LEFT
+                )
+                paragraph.add_run("\t")
+        else:
+            gap = span_left - previous_end
+            if gap > max(8, span["size"] * 1.1):
+                paragraph.paragraph_format.tab_stops.add_tab_stop(
+                    Pt(span_left), WD_TAB_ALIGNMENT.LEFT
+                )
+                paragraph.add_run("\t")
+            elif gap > 1.5:
+                paragraph.add_run(" ")
+        run = paragraph.add_run(value)
         run.font.name = "Arial"
         run.font.size = Pt(max(6, min(14, span["size"] * 0.82)))
         run.bold = bool(span["flags"] & 16)
+        run.italic = bool(span["flags"] & 2)
+        previous_end = max(span_left, span["bbox"][2])
     return top + line_height
 
 
@@ -178,6 +194,35 @@ def _line_is_in_table(line, table_bounds):
         ):
             return True
     return False
+
+
+def _merge_same_row_lines(lines):
+    """Join separate PDF text blocks that share a visual row into tabbed Word lines."""
+    rows = []
+    for line in sorted(lines, key=lambda item: (item["bbox"][1], item["bbox"][0])):
+        bounds = fitz.Rect(line["bbox"])
+        height = max(1, bounds.height)
+        matching_row = None
+        for row in reversed(rows):
+            row_bounds = fitz.Rect(row["bbox"])
+            overlap = max(0, min(bounds.y1, row_bounds.y1) - max(bounds.y0, row_bounds.y0))
+            if overlap / min(height, max(1, row_bounds.height)) >= 0.6:
+                matching_row = row
+                break
+            if row_bounds.y1 < bounds.y0:
+                break
+
+        if matching_row is None:
+            rows.append({"bbox": list(line["bbox"]), "spans": list(line["spans"])})
+        else:
+            row_bounds = fitz.Rect(matching_row["bbox"])
+            row_bounds.include_rect(bounds)
+            matching_row["bbox"] = list(row_bounds)
+            matching_row["spans"].extend(line["spans"])
+
+    for row in rows:
+        row["spans"].sort(key=lambda span: (span["bbox"][0], span["bbox"][1]))
+    return rows
 
 
 def _append_ocr_page(document, text, page_number):
@@ -358,10 +403,15 @@ def convert(source, destination, ocr_text_path=None, ocr_layout_path=None):
             tables = []
         table_bounds = [fitz.Rect(table.bbox) for table in tables]
         elements = [(table.bbox[1], table.bbox[0], "table", table) for table in tables]
+        page_lines = []
         for block in page.get_text("dict")["blocks"]:
             for line in block.get("lines", []):
                 if not _line_is_in_table(line, table_bounds):
-                    elements.append((line["bbox"][1], line["bbox"][0], "line", line))
+                    page_lines.append(line)
+        elements.extend(
+            (line["bbox"][1], line["bbox"][0], "line", line)
+            for line in _merge_same_row_lines(page_lines)
+        )
 
         if not elements and page_index < len(ocr_layout_pages) and ocr_layout_pages[page_index]:
             if not _append_positioned_ocr_page(document, ocr_layout_pages[page_index], section):
