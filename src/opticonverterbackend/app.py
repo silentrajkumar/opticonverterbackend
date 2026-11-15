@@ -99,7 +99,9 @@ def send_feedback_email(topic, name, reply_email, message, page):
     sender = os.environ.get("FEEDBACK_FROM_EMAIL", smtp_username)
     recipient = os.environ.get("FEEDBACK_TO_EMAIL", "opticonverter@gmail.com")
     if not smtp_username or not smtp_password or not sender:
-        raise RuntimeError("Feedback email delivery is not configured. Email opticonverter@gmail.com directly.")
+        raise RuntimeError(
+            "Feedback email delivery is not configured. Email opticonverter@gmail.com directly."
+        )
 
     email_message = EmailMessage()
     email_message["Subject"] = f"OptiConverter feedback: {topic}"
@@ -299,14 +301,19 @@ def feedback():
         return fail(f"Feedback must be between 1 and {MAX_FEEDBACK_LENGTH} characters.")
     if len(name) > 120 or any(ord(character) < 32 for character in name):
         return fail("Name must be 120 characters or fewer.")
-    if len(reply_email) > 254 or (reply_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reply_email)):
+    if len(reply_email) > 254 or (
+        reply_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reply_email)
+    ):
         return fail("Enter a valid reply email address.")
     parsed_page = urlparse(page)
     if len(page) > 2048 or (page and parsed_page.scheme not in {"http", "https"}):
         return fail("Page URL must be a valid HTTP or HTTPS URL.")
 
     if not os.environ.get("SMTP_USERNAME") or not os.environ.get("SMTP_PASSWORD"):
-        return fail("Feedback email delivery is not configured. Email opticonverter@gmail.com directly.", 503)
+        return fail(
+            "Feedback email delivery is not configured. Email opticonverter@gmail.com directly.",
+            503,
+        )
     if feedback_rate_limited(request.remote_addr or "unknown"):
         return fail("Too many feedback messages. Please try again later.", 429)
     try:
@@ -315,7 +322,10 @@ def feedback():
         return fail(str(error), 503)
     except (smtplib.SMTPException, OSError, ValueError):
         app.logger.exception("Feedback email delivery failed")
-        return fail("We could not deliver your feedback right now. Please email opticonverter@gmail.com directly.", 502)
+        return fail(
+            "We could not deliver your feedback right now. Please email opticonverter@gmail.com directly.",
+            502,
+        )
 
     return jsonify(message="Feedback sent successfully."), 200
 
